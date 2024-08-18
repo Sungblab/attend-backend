@@ -300,11 +300,9 @@ app.post("/api/admin/set-reader", verifyToken, isAdmin, async (req, res) => {
 app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   try {
     const { encryptedData } = req.body;
-
     const [ivHex, encryptedHex] = encryptedData.split(":");
     const iv = Buffer.from(ivHex, "hex");
     const encrypted = Buffer.from(encryptedHex, "hex");
-
     const decipher = crypto.createDecipheriv(
       "aes-256-cbc",
       Buffer.from(process.env.ENCRYPTION_KEY),
@@ -312,9 +310,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     );
     let decrypted = decipher.update(encrypted, "hex", "utf8");
     decrypted += decipher.final("utf8");
-
     const [studentId, timestamp] = decrypted.split("|");
-
     const scanTime = parseInt(timestamp);
     const currentTime = Math.floor(Date.now() / 30000);
     if (Math.abs(currentTime - scanTime) > 1) {
@@ -325,19 +321,24 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     if (!student) {
       return res.status(404).json({ message: "학생을 찾을 수 없습니다." });
     }
-
     if (!student.isApproved) {
       return res.status(400).json({ message: "승인되지 않은 학생입니다." });
     }
 
     const now = new Date();
-    const attendanceTime = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      ATTENDANCE_HOUR,
-      ATTENDANCE_MINUTE
-    );
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // 같은 날 중복 출석 확인
+    const existingAttendance = await Attendance.findOne({
+      studentId,
+      timestamp: { $gte: today },
+    });
+    if (existingAttendance) {
+      return res.status(400).json({ message: "이미 오늘 출석했습니다." });
+    }
+
+    const attendanceTime = new Date(today);
+    attendanceTime.setHours(ATTENDANCE_HOUR, ATTENDANCE_MINUTE, 0, 0);
 
     const isLate = now > attendanceTime;
     const lateMinutes = isLate ? Math.floor((now - attendanceTime) / 60000) : 0;
@@ -350,6 +351,10 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     });
 
     await attendance.save();
+
+    console.log(
+      `출석 기록: 학생 ID ${studentId}, 시간 ${now}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
+    );
 
     const responseMessage = isLate
       ? `출석이 기록되었습니다. ${lateMinutes}분 지각입니다.`
