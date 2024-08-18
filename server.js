@@ -326,7 +326,10 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     }
 
     const now = new Date();
+    console.log(`현재 시간: ${now.toISOString()}`);
+
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    console.log(`오늘 날짜: ${today.toISOString()}`);
 
     // 같은 날 중복 출석 확인
     const existingAttendance = await Attendance.findOne({
@@ -334,14 +337,18 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       timestamp: { $gte: today },
     });
     if (existingAttendance) {
+      console.log(`중복 출석 시도: ${studentId}`);
       return res.status(400).json({ message: "이미 오늘 출석했습니다." });
     }
 
     const attendanceTime = new Date(today);
     attendanceTime.setHours(ATTENDANCE_HOUR, ATTENDANCE_MINUTE, 0, 0);
+    console.log(`출석 기준 시간: ${attendanceTime.toISOString()}`);
 
     const isLate = now > attendanceTime;
     const lateMinutes = isLate ? Math.floor((now - attendanceTime) / 60000) : 0;
+
+    console.log(`지각 여부: ${isLate}, 지각 시간: ${lateMinutes}분`);
 
     const attendance = new Attendance({
       studentId,
@@ -353,7 +360,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     await attendance.save();
 
     console.log(
-      `출석 기록: 학생 ID ${studentId}, 시간 ${now}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
+      `출석 기록: 학생 ID ${studentId}, 시간 ${now.toISOString()}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
     );
 
     const responseMessage = isLate
@@ -372,6 +379,9 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       .json({ message: "서버 오류가 발생했습니다.", error: error.message });
   }
 });
+
+// ATTENDANCE_HOUR와 ATTENDANCE_MINUTE 변수 확인
+console.log(`출석 기준 시간: ${ATTENDANCE_HOUR}시 ${ATTENDANCE_MINUTE}분`);
 
 // 대시보드 API 엔드포인트 수정
 app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
