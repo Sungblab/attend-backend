@@ -326,33 +326,45 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     }
 
     const now = new Date();
-    console.log(`현재 시간: ${now.toISOString()}`);
+    const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000); // KST로 변환
+    console.log(`현재 시간 (KST): ${kstNow.toISOString()}`);
 
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    console.log(`오늘 날짜: ${today.toISOString()}`);
+    const today = new Date(
+      kstNow.getFullYear(),
+      kstNow.getMonth(),
+      kstNow.getDate()
+    );
+    console.log(`오늘 날짜 (KST): ${today.toISOString()}`);
 
     // 같은 날 중복 출석 확인
     const existingAttendance = await Attendance.findOne({
       studentId,
-      timestamp: { $gte: today },
+      timestamp: {
+        $gte: new Date(today.getTime() - 9 * 60 * 60 * 1000), // KST 날짜의 시작을 UTC로 변환
+        $lt: new Date(today.getTime() + 15 * 60 * 60 * 1000), // KST 날짜의 다음 날 시작을 UTC로 변환
+      },
     });
     if (existingAttendance) {
-      console.log(`중복 출석 시도: ${studentId}`);
+      console.log(
+        `중복 출석 시도 (KST): ${studentId}, ${kstNow.toISOString()}`
+      );
       return res.status(400).json({ message: "이미 오늘 출석했습니다." });
     }
 
     const attendanceTime = new Date(today);
     attendanceTime.setHours(ATTENDANCE_HOUR, ATTENDANCE_MINUTE, 0, 0);
-    console.log(`출석 기준 시간: ${attendanceTime.toISOString()}`);
+    console.log(`출석 기준 시간 (KST): ${attendanceTime.toISOString()}`);
 
-    const isLate = now > attendanceTime;
-    const lateMinutes = isLate ? Math.floor((now - attendanceTime) / 60000) : 0;
+    const isLate = kstNow > attendanceTime;
+    const lateMinutes = isLate
+      ? Math.floor((kstNow - attendanceTime) / 60000)
+      : 0;
 
     console.log(`지각 여부: ${isLate}, 지각 시간: ${lateMinutes}분`);
 
     const attendance = new Attendance({
       studentId,
-      timestamp: now,
+      timestamp: now, // UTC 시간 저장
       isLate,
       lateMinutes,
     });
@@ -360,7 +372,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     await attendance.save();
 
     console.log(
-      `출석 기록: 학생 ID ${studentId}, 시간 ${now.toISOString()}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
+      `출석 기록 (KST): 학생 ID ${studentId}, 시간 ${kstNow.toISOString()}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
     );
 
     const responseMessage = isLate
@@ -381,7 +393,9 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 });
 
 // ATTENDANCE_HOUR와 ATTENDANCE_MINUTE 변수 확인
-console.log(`출석 기준 시간: ${ATTENDANCE_HOUR}시 ${ATTENDANCE_MINUTE}분`);
+console.log(
+  `출석 기준 시간: ${ATTENDANCE_HOUR}시 ${ATTENDANCE_MINUTE}분 (KST)`
+);
 
 // 대시보드 API 엔드포인트 수정
 app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
