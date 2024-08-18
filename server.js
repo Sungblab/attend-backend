@@ -726,3 +726,28 @@ function calculateLateMinutes(timestamp) {
   }
   return 0;
 }
+
+app.post(
+  "/api/admin/reset-password",
+  verifyToken,
+  isAdmin,
+  async (req, res) => {
+    try {
+      const { userId } = req.body;
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash("1234", salt);
+      user.password = hashedPassword;
+      await user.save();
+
+      res.json({ message: "비밀번호가 초기화되었습니다." });
+    } catch (error) {
+      console.error("비밀번호 초기화 중 오류 발생:", error);
+      res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    }
+  }
+);
