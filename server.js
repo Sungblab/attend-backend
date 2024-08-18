@@ -342,8 +342,8 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     const existingAttendance = await Attendance.findOne({
       studentId,
       timestamp: {
-        $gte: new Date(today.getTime() - 9 * 60 * 60 * 1000), // KST 날짜의 시작을 UTC로 변환
-        $lt: new Date(today.getTime() + 15 * 60 * 60 * 1000), // KST 날짜의 다음 날 시작을 UTC로 변환
+        $gte: new Date(today.getTime() - 9 * 60 * 60 * 1000),
+        $lt: new Date(today.getTime() + 15 * 60 * 60 * 1000),
       },
     });
     if (existingAttendance) {
@@ -356,6 +356,15 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     const attendanceTime = new Date(today);
     attendanceTime.setHours(ATTENDANCE_HOUR, ATTENDANCE_MINUTE, 0, 0);
     console.log(`출석 기준 시간 (KST): ${attendanceTime.toISOString()}`);
+
+    const absenceTime = new Date(today);
+    absenceTime.setHours(9, 0, 0, 0);
+    console.log(`결석 기준 시간 (KST): ${absenceTime.toISOString()}`);
+
+    if (kstNow >= absenceTime) {
+      console.log(`결석 처리 (KST): ${studentId}, ${kstNow.toISOString()}`);
+      return res.status(400).json({ message: "결석 처리되었습니다." });
+    }
 
     const isLate = kstNow > attendanceTime;
     const lateMinutes = isLate
