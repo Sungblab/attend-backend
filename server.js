@@ -866,8 +866,6 @@ app.post(
   }
 );
 
-const ExcelJS = require("exceljs");
-
 app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
