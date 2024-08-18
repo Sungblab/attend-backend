@@ -6,6 +6,7 @@ const dotenv = require("dotenv");
 const cors = require("cors");
 const crypto = require("crypto");
 const cron = require("node-cron");
+const ExcelJS = require("exceljs");
 dotenv.config();
 
 const app = express();
@@ -42,6 +43,7 @@ const AttendanceSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
   isLate: { type: Boolean, default: false },
   lateMinutes: { type: Number, default: 0 },
+  lateReason: { type: String, default: null },
 });
 
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
@@ -400,7 +402,16 @@ console.log(
 // 대시보드 API 엔드포인트 수정
 app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
   try {
-    const { grade, class: classNumber, period } = req.query;
+    const {
+      grade,
+      class: classNumber,
+      period,
+      attendanceStatus,
+      lateCount,
+      search,
+      page = 1,
+      limit = 20,
+    } = req.query;
     let startDate, endDate;
 
     // 기간 설정 (이전과 동일)
@@ -431,9 +442,17 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     const userQuery = {};
     if (grade) userQuery.grade = Number(grade);
     if (classNumber) userQuery.class = Number(classNumber);
+    if (search) {
+      userQuery.$or = [
+        { name: { $regex: search, $options: "i" } },
+        { studentId: { $regex: search, $options: "i" } },
+      ];
+    }
 
     const users = await User.find(userQuery)
       .sort({ grade: 1, class: 1, number: 1 })
+      .skip((page - 1) * limit)
+      .limit(Number(limit))
       .lean();
 
     // 출석 기록 조회 (AttendanceHistory 포함)
@@ -528,18 +547,41 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     // 최우수 출석 학생 찾기
     const bestAttendanceStudent = findBestAttendanceStudent(attendanceData);
 
+    // 필터링 적용
+    let filteredAttendanceData = attendanceData;
+    if (attendanceStatus) {
+      filteredAttendanceData = filteredAttendanceData.filter((student) => {
+        if (attendanceStatus === "present")
+          return student.totalAttendance > 0 && student.lateAttendance === 0;
+        if (attendanceStatus === "late") return student.lateAttendance > 0;
+        if (attendanceStatus === "absent") return student.totalAttendance === 0;
+      });
+    }
+    if (lateCount) {
+      filteredAttendanceData = filteredAttendanceData.filter(
+        (student) => student.lateAttendance >= Number(lateCount)
+      );
+    }
+
+    // 전체 학생 수 계산 (페이지네이션을 위해)
+    const totalStudents = await User.countDocuments(userQuery);
+
     res.json({
-      attendanceData,
+      attendanceData: filteredAttendanceData,
       overallStats,
       bestAttendanceStudent,
       period: { startDate, endDate },
+      pagination: {
+        currentPage: Number(page),
+        totalPages: Math.ceil(totalStudents / limit),
+        totalItems: totalStudents,
+      },
     });
   } catch (error) {
     console.error("대시보드 데이터 조회 중 오류 발생:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
-
 // 최우수 출석 학생 찾기 함수
 function findBestAttendanceStudent(attendanceData) {
   return attendanceData.reduce((best, current) => {
@@ -711,7 +753,7 @@ cron.schedule("0 0 * * *", async () => {
 // 출석 수정 API 엔드포인트
 app.post("/api/attendance/modify", verifyToken, isAdmin, async (req, res) => {
   try {
-    const { studentId, date, status } = req.body;
+    const { studentId, date, status, lateReason } = req.body;
 
     const attendance = await Attendance.findOne({
       studentId,
@@ -730,6 +772,7 @@ app.post("/api/attendance/modify", verifyToken, isAdmin, async (req, res) => {
     attendance.isLate = status === "late";
     attendance.lateMinutes =
       status === "late" ? calculateLateMinutes(attendance.timestamp) : 0;
+    attendance.lateReason = status === "late" ? lateReason : null;
 
     await attendance.save();
 
@@ -822,3 +865,59 @@ app.post(
     }
   }
 );
+
+const ExcelJS = require("exceljs");
+
+app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    // 출석 데이터 조회
+    const attendanceData = await Attendance.find({
+      timestamp: { $gte: new Date(startDate), $lte: new Date(endDate) },
+    }).populate("studentId", "name grade class number");
+
+    // 엑셀 파일 생성
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("출석 데이터");
+
+    worksheet.columns = [
+      { header: "이름", key: "name", width: 15 },
+      { header: "학년", key: "grade", width: 10 },
+      { header: "반", key: "class", width: 10 },
+      { header: "번호", key: "number", width: 10 },
+      { header: "출석 시간", key: "timestamp", width: 20 },
+      { header: "지각 여부", key: "isLate", width: 10 },
+      { header: "지각 시간(분)", key: "lateMinutes", width: 15 },
+      { header: "지각 사유", key: "lateReason", width: 30 },
+    ];
+
+    attendanceData.forEach((record) => {
+      worksheet.addRow({
+        name: record.studentId.name,
+        grade: record.studentId.grade,
+        class: record.studentId.class,
+        number: record.studentId.number,
+        timestamp: record.timestamp,
+        isLate: record.isLate ? "지각" : "정상",
+        lateMinutes: record.lateMinutes,
+        lateReason: record.lateReason || "",
+      });
+    });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=attendance_data.xlsx"
+    );
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error("엑셀 파일 생성 중 오류 발생:", error);
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+});
