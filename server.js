@@ -403,7 +403,7 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     const { grade, class: classNumber, period } = req.query;
     let startDate, endDate;
 
-    // 기간 설정
+    // 기간 설정 (이전과 동일)
     const now = new Date();
     switch (period) {
       case "day":
@@ -419,7 +419,6 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
         endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
         break;
       case "semester":
-        // 학기 시작일과 종료일을 적절히 설정해야 합니다
         startDate = new Date(now.getFullYear(), 2, 1); // 3월 1일로 가정
         endDate = new Date(now.getFullYear(), 7, 31); // 8월 31일로 가정
         break;
@@ -434,7 +433,7 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     if (classNumber) userQuery.class = Number(classNumber);
 
     const users = await User.find(userQuery)
-      .sort({ grade: 1, class: 1, number: 1 }) // number로 정렬 추가
+      .sort({ grade: 1, class: 1, number: 1 })
       .lean();
 
     // 출석 기록 조회 (AttendanceHistory 포함)
@@ -469,7 +468,6 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
         0
       );
 
-      // lastAttendanceTime이 유효한 값인지 확인
       let lastAttendanceTime = null;
       if (allUserAttendance.length > 0) {
         const latestAttendance = allUserAttendance.reduce((latest, current) =>
@@ -480,12 +478,28 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
           : null;
       }
 
+      // 지각 기록 추가
+      const lateRecords = allUserAttendance
+        .filter((record) => record.isLate)
+        .map((record) => ({
+          date: record.timestamp,
+          lateMinutes: record.lateMinutes,
+        }));
+
+      // 출석 날짜와 지각 날짜 추가
+      const attendanceDates = allUserAttendance.map(
+        (record) => record.timestamp
+      );
+      const lateDates = allUserAttendance
+        .filter((record) => record.isLate)
+        .map((record) => record.timestamp);
+
       return {
         name: user.name,
         studentId: user.studentId,
         grade: user.grade,
         class: user.class,
-        number: user.number, // 실제 번호 추가
+        number: user.number,
         totalAttendance,
         lateAttendance,
         totalLateMinutes,
@@ -498,17 +512,26 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
           totalAttendance > 0
             ? ((lateAttendance / totalAttendance) * 100).toFixed(2)
             : 0,
+        lateRecords,
+        attendanceDates,
+        lateDates,
       };
     });
+
     // 전체 통계 계산
     const overallStats = calculateOverallStats(
       attendanceData,
       startDate,
       endDate
     );
+
+    // 최우수 출석 학생 찾기
+    const bestAttendanceStudent = findBestAttendanceStudent(attendanceData);
+
     res.json({
       attendanceData,
       overallStats,
+      bestAttendanceStudent,
       period: { startDate, endDate },
     });
   } catch (error) {
@@ -516,6 +539,21 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
+
+// 최우수 출석 학생 찾기 함수
+function findBestAttendanceStudent(attendanceData) {
+  return attendanceData.reduce((best, current) => {
+    if (!best || current.totalAttendance > best.totalAttendance) {
+      return current;
+    } else if (
+      current.totalAttendance === best.totalAttendance &&
+      current.lateAttendance < best.lateAttendance
+    ) {
+      return current;
+    }
+    return best;
+  }, null);
+}
 
 // Get attendance records route
 app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
@@ -732,15 +770,19 @@ function calculateOverallStats(attendanceData, startDate, endDate) {
     }
   );
 
+  const workingDays = getWorkingDays(startDate, endDate);
+
   stats.averageAttendanceRate = (
-    (stats.totalAttendance /
-      (stats.totalStudents * getWorkingDays(startDate, endDate))) *
+    (stats.totalAttendance / (stats.totalStudents * workingDays)) *
     100
   ).toFixed(2);
   stats.averageLateRate =
     stats.totalAttendance > 0
       ? ((stats.totalLateAttendance / stats.totalAttendance) * 100).toFixed(2)
       : 0;
+  stats.averageLateMinutes = (
+    stats.totalLateMinutes / stats.totalLateAttendance || 0
+  ).toFixed(2);
 
   return stats;
 }
