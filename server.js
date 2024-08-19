@@ -358,7 +358,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     console.log(`출석 기준 시간 (KST): ${attendanceTime.toISOString()}`);
 
     const absenceTime = new Date(today);
-    absenceTime.setHours(9, 0, 0, 0);
+    absenceTime.setHours(10, 0, 0, 0);
     console.log(`결석 기준 시간 (KST): ${absenceTime.toISOString()}`);
 
     if (kstNow >= absenceTime) {
