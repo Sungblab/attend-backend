@@ -45,7 +45,6 @@ const AttendanceSchema = new mongoose.Schema({
   isLate: { type: Boolean, default: false },
   lateMinutes: { type: Number, default: 0 },
   lateReason: { type: String, default: null },
-  dailyLateMinutes: { type: Number, default: 0 },
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   approvalReason: String,
   approvalTimestamp: Date
@@ -372,7 +371,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     }
 
     const isLate = kstNow > attendanceTime;
-    const dailyLateMinutes = isLate
+    const lateMinutes = isLate
       ? Math.floor((kstNow - attendanceTime) / 60000)
       : 0;
     
@@ -380,17 +379,17 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       studentId,
       timestamp: now,
       isLate,
-      dailyLateMinutes,
+      lateMinutes,
     });
 
     await attendance.save();
 
     console.log(
-      `출석 기록 (KST): 학생 ID ${studentId}, 시간 ${kstNow.toISOString()}, 지각 여부 ${isLate}, 지각 시간 ${dailyLateMinutes}분`
+      `출석 기록 (KST): 학생 ID ${studentId}, 시간 ${kstNow.toISOString()}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
     );
 
     const responseMessage = isLate
-    ? `"${studentId}" "${student.name}" 출석 성공. ${dailyLateMinutes}분 지각입니다.`
+    ? `"${studentId}" "${student.name}" 출석 성공. ${lateMinutes}분 지각입니다.`
     : `"${studentId}" "${student.name}" 출석 성공.`;
 
     res.status(201).json({
@@ -755,7 +754,7 @@ cron.schedule("0 0 * * *", async () => {
     // 어제의 출석 상태 초기화 (예: isLate 필드를 false로 설정)
     await Attendance.updateMany(
       { timestamp: { $gte: yesterday, $lt: today } },
-      { $set: { isLate: false, dailyLateMinutes: 0 } }
+      { $set: { isLate: false, lateMinutes: 0 } }
     );
 
     console.log("일일 출석 초기화 완료");
@@ -957,7 +956,7 @@ app.post("/api/attendance/approve", verifyToken, isAdmin, async (req, res) => {
 
     // 출석 상태 업데이트
     attendance.isLate = false;
-    attendance.dailyLateMinutes = 0;
+    attendance.lateMinutes = 0;
     attendance.lateReason = null;
     attendance.approvedBy = req.user.id;
     attendance.approvalReason = reason;
@@ -967,7 +966,7 @@ app.post("/api/attendance/approve", verifyToken, isAdmin, async (req, res) => {
 
     // 학생의 총 지각 시간 재계산
     const allAttendances = await Attendance.find({ studentId });
-    const totalLateMinutes = allAttendances.reduce((sum, record) => sum + (record.dailyLateMinutes || 0), 0);
+    const totalLateMinutes = allAttendances.reduce((sum, record) => sum + (record.lateMinutes || 0), 0);
 
     // User 모델 업데이트 (totalLateMinutes 필드가 있다고 가정)
     await User.findOneAndUpdate(
