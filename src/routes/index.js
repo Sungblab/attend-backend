@@ -41,12 +41,35 @@ router.post("/admin/approve-user", verifyToken, isAdmin, approveUser);
 router.post("/admin/set-admin", verifyToken, isAdmin, setAdminStatus);
 router.post("/admin/set-reader", verifyToken, isAdmin, setReaderStatus);
 router.post("/admin/reset-password", verifyToken, isAdmin, resetPassword);
-router.get("/admin/users", verifyToken, isAdmin, (req, res) => {
-  // Implement getUsers logic here
+router.get("/admin/users", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const { grade, class: classNumber } = req.query;
+    let query = {};
+    if (grade) query.grade = Number(grade);
+    if (classNumber) query.class = Number(classNumber);
+
+    const users = await User.find(query).select("-password");
+    res.json(users);
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
 });
-router.delete("/admin/users/:userId", verifyToken, isAdmin, (req, res) => {
-  // Implement deleteUser logic here
-});
+router.delete(
+  "/admin/users/:userId",
+  verifyToken,
+  isAdmin,
+  async (req, res) => {
+    try {
+      const { userId } = req.params;
+      await User.findByIdAndDelete(userId);
+      res.json({ message: "사용자가 삭제되었습니다." });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    }
+  }
+);
 
 // Dashboard route
 router.get("/dashboard", verifyToken, isAdmin, getDashboard);
@@ -55,8 +78,21 @@ router.get("/dashboard", verifyToken, isAdmin, getDashboard);
 router.get("/download-excel", verifyToken, isAdmin, downloadExcel);
 
 // Student info route
-router.get("/student-info", verifyToken, (req, res) => {
-  // Implement getStudentInfo logic here
+router.get("/student-info", verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "사용자를 찾을 수 없습니다." });
+    }
+    res.json({ success: true, studentId: user.studentId, name: user.name });
+  } catch (error) {
+    console.error(error);
+    res
+      .status(500)
+      .json({ success: false, message: "서버 오류가 발생했습니다." });
+  }
 });
 
 module.exports = router;
