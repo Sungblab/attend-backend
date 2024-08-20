@@ -7,6 +7,7 @@ const cors = require("cors");
 const crypto = require("crypto");
 const cron = require("node-cron");
 const ExcelJS = require("exceljs");
+const moment = require('moment-timezone');
 dotenv.config();
 
 const app = express();
@@ -44,12 +45,16 @@ const AttendanceSchema = new mongoose.Schema({
   isLate: { type: Boolean, default: false },
   lateMinutes: { type: Number, default: 0 },
   lateReason: { type: String, default: null },
+  dailyLateMinutes: { type: Number, default: 0 },
+  approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  approvalReason: String,
+  approvalTimestamp: Date
 });
 
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
 const ATTENDANCE_HOUR = 8;
-const ATTENDANCE_MINUTE = 1;
+const ATTENDANCE_MINUTE = 3;
 
 // Middleware to verify JWT token
 const verifyToken = (req, res, next) => {
@@ -367,17 +372,15 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     }
 
     const isLate = kstNow > attendanceTime;
-    const lateMinutes = isLate
+    const dailyLateMinutes = isLate
       ? Math.floor((kstNow - attendanceTime) / 60000)
       : 0;
-
-    console.log(`지각 여부: ${isLate}, 지각 시간: ${lateMinutes}분`);
-
+    
     const attendance = new Attendance({
       studentId,
-      timestamp: now, // UTC 시간 저장
+      timestamp: now,
       isLate,
-      lateMinutes,
+      dailyLateMinutes,
     });
 
     await attendance.save();
@@ -387,8 +390,8 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     );
 
     const responseMessage = isLate
-      ? `출석이 기록되었습니다. ${lateMinutes}분 지각입니다.`
-      : "출석이 성공적으로 기록되었습니다.";
+      ? `"${studentId}" "${student.name}" 출석 성공. ${lateMinutes}분 지각입니다.`
+      : `"${studentId}" "${student.name}" 출석 성공.`;
 
     res.status(201).json({
       message: responseMessage,
@@ -609,7 +612,9 @@ function findBestAttendanceStudent(attendanceData) {
 // Get attendance records route
 app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
   try {
-    const attendanceRecords = await Attendance.find().sort({ timestamp: -1 });
+    const attendanceRecords = await Attendance.find()
+      .sort({ timestamp: -1 })
+      .populate('approvedBy', 'name');  // approvedBy 필드에 대한 정보 추가
     res.json(attendanceRecords);
   } catch (error) {
     console.error(error);
@@ -750,7 +755,7 @@ cron.schedule("0 0 * * *", async () => {
     // 어제의 출석 상태 초기화 (예: isLate 필드를 false로 설정)
     await Attendance.updateMany(
       { timestamp: { $gte: yesterday, $lt: today } },
-      { $set: { isLate: false } }
+      { $set: { isLate: false, dailyLateMinutes: 0 } }
     );
 
     console.log("일일 출석 초기화 완료");
@@ -925,6 +930,54 @@ app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
     res.end();
   } catch (error) {
     console.error("엑셀 파일 생성 중 오류 발생:", error);
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+});
+
+// 출결 인정 API
+app.post("/api/attendance/approve", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const { studentId, reason, date } = req.body;
+
+    // 날짜가 제공되지 않은 경우 오늘 날짜 사용
+    const approvalDate = date ? moment(date).tz('Asia/Seoul').startOf('day') : moment().tz('Asia/Seoul').startOf('day');
+
+    // 해당 날짜의 출석 기록 찾기
+    const attendance = await Attendance.findOne({
+      studentId,
+      timestamp: {
+        $gte: approvalDate.toDate(),
+        $lt: moment(approvalDate).add(1, 'days').toDate()
+      }
+    });
+
+    if (!attendance) {
+      return res.status(404).json({ message: "해당 날짜의 출석 기록을 찾을 수 없습니다." });
+    }
+
+    // 출석 상태 업데이트
+    attendance.isLate = false;
+    attendance.dailyLateMinutes = 0;
+    attendance.lateReason = null;
+    attendance.approvedBy = req.user.id;
+    attendance.approvalReason = reason;
+    attendance.approvalTimestamp = new Date();
+
+    await attendance.save();
+
+    // 학생의 총 지각 시간 재계산
+    const allAttendances = await Attendance.find({ studentId });
+    const totalLateMinutes = allAttendances.reduce((sum, record) => sum + (record.dailyLateMinutes || 0), 0);
+
+    // User 모델 업데이트 (totalLateMinutes 필드가 있다고 가정)
+    await User.findOneAndUpdate(
+      { studentId },
+      { $set: { totalLateMinutes: totalLateMinutes } }
+    );
+
+    res.json({ message: "출결이 성공적으로 인정되었습니다." });
+  } catch (error) {
+    console.error("출결 인정 중 오류 발생:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
