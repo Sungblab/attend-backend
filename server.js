@@ -386,12 +386,12 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     await attendance.save();
 
     console.log(
-      `출석 기록 (KST): 학생 ID ${studentId}, 시간 ${kstNow.toISOString()}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
+      `출석 기록 (KST): 학생 ID ${studentId}, 시간 ${kstNow.toISOString()}, 지각 여부 ${isLate}, 지각 시간 ${dailyLateMinutes}분`
     );
 
     const responseMessage = isLate
-      ? `"${studentId}" "${student.name}" 출석 성공. ${lateMinutes}분 지각입니다.`
-      : `"${studentId}" "${student.name}" 출석 성공.`;
+    ? `"${studentId}" "${student.name}" 출석 성공. ${dailyLateMinutes}분 지각입니다.`
+    : `"${studentId}" "${student.name}" 출석 성공.`;
 
     res.status(201).json({
       message: responseMessage,
