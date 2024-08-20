@@ -37,8 +37,4 @@ const AttendanceHistory = mongoose.model(
   AttendanceHistorySchema
 );
 
-module.exports = {
-  User,
-  Attendance,
-  AttendanceHistory,
-};
+module.exports = { User, Attendance, AttendanceHistory };
