@@ -1,25 +1,29 @@
 {
-  "name": "back",
+  "name": "attend-backend",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "backend",
+  "main": "src/app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
+    "crypto": "^1.0.1",
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
-    "html5-qrcode": "^2.3.8",
     "jsonwebtoken": "^9.0.2",
     "moment-timezone": "^0.5.45",
     "mongoose": "^8.5.3",
-    "node-cron": "^3.0.3",
-    "nodemailer": "^6.9.14"
-  }
+    "node-cron": "^3.0.3"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "author": "Sungblab",
+  "license": "ISC"
 }
