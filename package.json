@@ -17,9 +17,9 @@
     "express": "^4.19.2",
     "html5-qrcode": "^2.3.8",
     "jsonwebtoken": "^9.0.2",
+    "moment-timezone": "^0.5.45",
     "mongoose": "^8.5.3",
     "node-cron": "^3.0.3",
-    "nodemailer": "^6.9.14",
-    "moment-timezone": "^0.5.33"
+    "nodemailer": "^6.9.14"
   }
 }
