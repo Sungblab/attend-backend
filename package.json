@@ -19,6 +19,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.5.3",
     "node-cron": "^3.0.3",
-    "nodemailer": "^6.9.14"
+    "nodemailer": "^6.9.14",
+    "moment-timezone": "^0.5.33"
   }
 }
