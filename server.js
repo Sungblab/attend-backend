@@ -1057,22 +1057,21 @@ function calculateStudentDetails(attendanceRecords, allStudents, startDate, endD
     lastAttendanceStatus: '미출석'
   }]));
 
-  attendanceRecords.forEach(record => {
-    const studentDetail = studentMap.get(record.studentId.studentId);
-    if (studentDetail) {
-      studentDetail.totalAttendance++;
-      if (record.isLate) {
-        studentDetail.totalLateAttendance++;
-        studentDetail.totalLateMinutes += record.lateMinutes || 0;
-      }
-      
-      // 가장 최근 출석 기록 업데이트
-      if (!studentDetail.lastAttendanceTime || record.timestamp > studentDetail.lastAttendanceTime) {
-        studentDetail.lastAttendanceTime = record.timestamp;
-        studentDetail.lastAttendanceStatus = record.isLate ? '지각' : '정상';
-      }
+attendanceRecords.forEach(record => {
+  const studentDetail = studentMap.get(record.studentId.studentId);
+  if (studentDetail) {
+    studentDetail.totalAttendance++;
+    if (record.isLate) {
+      studentDetail.totalLateAttendance++;
+      studentDetail.totalLateMinutes += record.lateMinutes || 0;
     }
-  });
+    // 최근 출석 기록 업데이트
+    if (!studentDetail.lastAttendanceTime || record.timestamp > studentDetail.lastAttendanceTime) {
+      studentDetail.lastAttendanceTime = record.timestamp;
+      studentDetail.lastAttendanceStatus = record.isLate ? '지각' : '정상';
+    }
+  }
+});
 
   return Array.from(studentMap.values())
     .sort((a, b) => {
