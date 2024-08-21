@@ -606,6 +606,44 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
+app.get("/api/student/:studentId", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    
+    // studentId가 숫자인 경우를 처리
+    const query = isNaN(studentId) ? { studentId } : { number: parseInt(studentId) };
+    
+    const student = await User.findOne(query).lean();
+
+    if (!student) {
+      return res.status(404).json({ message: "학생을 찾을 수 없습니다." });
+    }
+
+    const attendanceRecords = await Attendance.find({ studentId: student.studentId }).sort({ timestamp: -1 }).lean();
+
+    const studentDetails = {
+      ...student,
+      attendanceRecords: attendanceRecords.map(record => ({
+        date: record.timestamp,
+        status: record.isLate ? "late" : "present",
+        lateMinutes: record.lateMinutes,
+        lateReason: record.lateReason
+      }))
+    };
+
+    res.json(studentDetails);
+  } catch (error) {
+    console.error("학생 상세 정보 조회 중 오류 발생:", error);
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+});
+
+// 추가: 에러 처리 미들웨어
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ message: "서버 내부 오류가 발생했습니다." });
+});
+
 function findBestAttendanceStudent(attendanceData) {
   if (!attendanceData || attendanceData.length === 0) {
     return null;
