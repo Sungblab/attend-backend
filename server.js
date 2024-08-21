@@ -989,18 +989,27 @@ app.get("/api/attendance/date", verifyToken, isAdmin, async (req, res) => {
 
 app.get("/api/dashboard/advanced", verifyToken, isAdmin, async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, grade, class: classNumber } = req.query;
 
-    // 날짜 범위에 따른 출석 기록 조회
+    // 학생 필터 조건 생성
+    const studentFilter = {};
+    if (grade) studentFilter.grade = Number(grade);
+    if (classNumber) studentFilter.class = Number(classNumber);
+
+    // 해당하는 학생들의 ID 목록 가져오기
+    const studentIds = await User.find(studentFilter).distinct('_id');
+
+    // 날짜 범위와 학생 ID에 따른 출석 기록 조회
     const attendanceRecords = await Attendance.find({
       timestamp: {
         $gte: new Date(startDate),
         $lte: new Date(endDate)
-      }
+      },
+      studentId: { $in: studentIds }
     }).populate('studentId', 'name grade class number');
 
-    // 모든 학생 정보 조회
-    const allStudents = await User.find({ isApproved: true });
+    // 해당하는 모든 학생 정보 조회
+    const allStudents = await User.find({ ...studentFilter, isApproved: true });
 
     // 통계 계산
     const stats = calculateAdvancedStats(attendanceRecords, allStudents, new Date(startDate), new Date(endDate));
