@@ -499,6 +499,7 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
       );
 
       let lastAttendanceTime = null;
+      let dailyLateMinutes = 0;
       if (allUserAttendance.length > 0) {
         const latestAttendance = allUserAttendance.reduce((latest, current) =>
           latest.timestamp > current.timestamp ? latest : current
@@ -506,6 +507,7 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
         lastAttendanceTime = latestAttendance.timestamp
           ? latestAttendance.timestamp.toISOString()
           : null;
+        dailyLateMinutes = latestAttendance.lateMinutes || 0;
       }
 
       // 지각 기록 추가
@@ -524,16 +526,17 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
         .filter((record) => record.isLate)
         .map((record) => record.timestamp);
 
-      return {
-        name: user.name,
-        studentId: user.studentId,
-        grade: user.grade,
-        class: user.class,
-        number: user.number,
-        totalAttendance,
-        lateAttendance,
-        totalLateMinutes,
-        lastAttendanceTime,
+        return {
+          name: user.name,
+          studentId: user.studentId,
+          grade: user.grade,
+          class: user.class,
+          number: user.number,
+          totalAttendance,
+          lateAttendance,
+          totalLateMinutes,
+          dailyLateMinutes,
+          lastAttendanceTime,
         attendanceRate: (
           (totalAttendance / getWorkingDays(startDate, endDate)) *
           100
@@ -933,7 +936,6 @@ app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// 출결 인정 API
 app.post("/api/attendance/approve", verifyToken, isAdmin, async (req, res) => {
   try {
     const { studentId, reason, date } = req.body;
