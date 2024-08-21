@@ -606,6 +606,34 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
+function findBestAttendanceStudent(attendanceData) {
+  if (!attendanceData || attendanceData.length === 0) {
+    return null;
+  }
+
+  return attendanceData.reduce((best, current) => {
+    if (!best) return current;
+
+    // 출석률이 높은 학생 선택
+    if (parseFloat(current.attendanceRate) > parseFloat(best.attendanceRate)) {
+      return current;
+    }
+
+    // 출석률이 같다면 지각이 적은 학생 선택
+    if (parseFloat(current.attendanceRate) === parseFloat(best.attendanceRate)) {
+      if (current.lateAttendance < best.lateAttendance) {
+        return current;
+      }
+      // 지각 횟수도 같다면 총 지각 시간이 적은 학생 선택
+      if (current.lateAttendance === best.lateAttendance) {
+        return current.totalLateMinutes < best.totalLateMinutes ? current : best;
+      }
+    }
+
+    return best;
+  }, null);
+}
+
 // Get attendance records route
 app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
   try {
