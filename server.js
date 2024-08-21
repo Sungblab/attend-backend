@@ -835,36 +835,28 @@ function getWorkingDays(startDate, endDate) {
 }
 
 // 수정된 calculateOverallStats 함수
-function calculateOverallStats(attendanceData, startDate, endDate) {
-  const stats = attendanceData.reduce(
-    (acc, curr) => {
-      acc.totalStudents++;
-      acc.totalAttendance += curr.totalAttendance;
-      acc.totalLateAttendance += curr.lateAttendance;
-      acc.totalLateMinutes += curr.totalLateMinutes;
-      return acc;
-    },
-    {
-      totalStudents: 0,
-      totalAttendance: 0,
-      totalLateAttendance: 0,
-      totalLateMinutes: 0,
+function calculateOverallStats(attendanceData) {
+  const stats = {
+    totalStudents: attendanceData.length,
+    presentStudents: 0,
+    lateStudents: 0,
+    absentStudents: 0,
+    totalLateMinutes: 0
+  };
+
+  attendanceData.forEach(student => {
+    if (student.attendanceStatus === "present") {
+      stats.presentStudents++;
+    } else if (student.attendanceStatus === "late") {
+      stats.lateStudents++;
+      stats.totalLateMinutes += student.lateMinutes;
+    } else {
+      stats.absentStudents++;
     }
-  );
+  });
 
-  const workingDays = getWorkingDays(startDate, endDate);
-
-  stats.averageAttendanceRate = (
-    (stats.totalAttendance / (stats.totalStudents * workingDays)) *
-    100
-  ).toFixed(2);
-  stats.averageLateRate =
-    stats.totalAttendance > 0
-      ? ((stats.totalLateAttendance / stats.totalAttendance) * 100).toFixed(2)
-      : 0;
-  stats.averageLateMinutes = (
-    stats.totalLateMinutes / stats.totalLateAttendance || 0
-  ).toFixed(2);
+  stats.attendanceRate = ((stats.presentStudents + stats.lateStudents) / stats.totalStudents * 100).toFixed(2);
+  stats.averageLateMinutes = stats.lateStudents > 0 ? (stats.totalLateMinutes / stats.lateStudents).toFixed(2) : 0;
 
   return stats;
 }
