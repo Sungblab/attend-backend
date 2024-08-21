@@ -1011,11 +1011,8 @@ app.get("/api/dashboard/advanced", verifyToken, isAdmin, async (req, res) => {
     // 해당하는 모든 학생 정보 조회
     const allStudents = await User.find({ ...studentFilter, isApproved: true });
 
-    // 통계 계산
     const stats = calculateAdvancedStats(attendanceRecords, allStudents, new Date(startDate), new Date(endDate));
-
-    // 학생별 상세 정보 계산
-    const studentDetails = calculateStudentDetails(attendanceRecords, allStudents);
+    const studentDetails = calculateStudentDetails(attendanceRecords, allStudents, new Date(startDate), new Date(endDate));
 
     res.json({
       stats,
@@ -1027,7 +1024,6 @@ app.get("/api/dashboard/advanced", verifyToken, isAdmin, async (req, res) => {
     res.status(500).json({ message: '서버 오류가 발생했습니다.' });
   }
 });
-
 function calculateAdvancedStats(attendanceRecords, allStudents, startDate, endDate) {
   const totalStudents = allStudents.length;
   const totalAttendance = attendanceRecords.length;
@@ -1047,7 +1043,7 @@ function calculateAdvancedStats(attendanceRecords, allStudents, startDate, endDa
   };
 }
 
-function calculateStudentDetails(attendanceRecords, allStudents) {
+function calculateStudentDetails(attendanceRecords, allStudents, startDate, endDate) {
   const studentMap = new Map(allStudents.map(student => [student.studentId, {
     studentId: student.studentId,
     name: student.name,
@@ -1056,7 +1052,9 @@ function calculateStudentDetails(attendanceRecords, allStudents) {
     number: student.number,
     totalAttendance: 0,
     totalLateAttendance: 0,
-    totalLateMinutes: 0
+    totalLateMinutes: 0,
+    lastAttendanceTime: null,
+    lastAttendanceStatus: '미출석'
   }]));
 
   attendanceRecords.forEach(record => {
@@ -1067,10 +1065,21 @@ function calculateStudentDetails(attendanceRecords, allStudents) {
         studentDetail.totalLateAttendance++;
         studentDetail.totalLateMinutes += record.lateMinutes || 0;
       }
+      
+      // 가장 최근 출석 기록 업데이트
+      if (!studentDetail.lastAttendanceTime || record.timestamp > studentDetail.lastAttendanceTime) {
+        studentDetail.lastAttendanceTime = record.timestamp;
+        studentDetail.lastAttendanceStatus = record.isLate ? '지각' : '정상';
+      }
     }
   });
 
-  return Array.from(studentMap.values());
+  return Array.from(studentMap.values())
+    .sort((a, b) => {
+      if (a.grade !== b.grade) return a.grade - b.grade;
+      if (a.class !== b.class) return a.class - b.class;
+      return a.number - b.number;
+    });
 }
 
 function getWorkingDays(startDate, endDate) {
