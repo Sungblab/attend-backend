@@ -613,14 +613,105 @@ function findBestAttendanceStudent(attendanceData) {
 }
 
 // Get attendance records route
+// 통합된 출석 API
 app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
   try {
-    const attendanceRecords = await Attendance.find()
-      .sort({ timestamp: -1 })
-      .populate('approvedBy', 'name');  // approvedBy 필드에 대한 정보 추가
-    res.json(attendanceRecords);
+    const { date, startDate, endDate } = req.query;
+
+    if (date) {
+      // 특정 날짜의 출석 데이터 조회
+      const targetDate = new Date(date);
+      const nextDate = new Date(targetDate);
+      nextDate.setDate(nextDate.getDate() + 1);
+
+      const attendanceRecords = await Attendance.find({
+        timestamp: { $gte: targetDate, $lt: nextDate }
+      }).populate('studentId', 'name studentId grade class number');
+
+      const allStudents = await User.find({ isApproved: true });
+
+      const studentDetails = allStudents.map(student => {
+        const record = attendanceRecords.find(r => r.studentId.studentId === student.studentId);
+        return {
+          name: student.name,
+          studentId: student.studentId,
+          grade: student.grade,
+          class: student.class,
+          number: student.number,
+          status: record ? (record.isLate ? 'late' : 'present') : 'absent',
+          lateMinutes: record ? record.lateMinutes : 0,
+          timestamp: record ? record.timestamp : null
+        };
+      });
+
+      const totalAttendance = attendanceRecords.length;
+      const onTimeAttendance = attendanceRecords.filter(record => !record.isLate).length;
+      const lateAttendance = attendanceRecords.filter(record => record.isLate).length;
+      const absentCount = allStudents.length - totalAttendance;
+
+      res.json({
+        date: targetDate,
+        totalAttendance,
+        onTimeAttendance,
+        lateAttendance,
+        absentCount,
+        studentDetails
+      });
+    } else if (startDate && endDate) {
+      // 기간별 출석 데이터 조회
+      const attendanceRecords = await Attendance.find({
+        timestamp: { $gte: new Date(startDate), $lte: new Date(endDate) }
+      }).populate('studentId', 'name studentId grade class number')
+        .sort({ timestamp: -1 });
+
+      const summary = {
+        totalAttendance: attendanceRecords.length,
+        onTimeAttendance: attendanceRecords.filter(r => !r.isLate).length,
+        lateAttendance: attendanceRecords.filter(r => r.isLate).length,
+        totalLateMinutes: attendanceRecords.reduce((sum, r) => sum + (r.lateMinutes || 0), 0)
+      };
+
+      res.json({
+        startDate,
+        endDate,
+        summary,
+        records: attendanceRecords.map(record => ({
+          studentId: record.studentId.studentId,
+          name: record.studentId.name,
+          grade: record.studentId.grade,
+          class: record.studentId.class,
+          number: record.studentId.number,
+          timestamp: record.timestamp,
+          isLate: record.isLate,
+          lateMinutes: record.lateMinutes,
+          approvedBy: record.approvedBy ? record.approvedBy.name : null,
+          approvalReason: record.approvalReason,
+          approvalTimestamp: record.approvalTimestamp
+        }))
+      });
+    } else {
+      // 전체 출석 기록 조회 (기본값)
+      const attendanceRecords = await Attendance.find()
+        .sort({ timestamp: -1 })
+        .populate('studentId', 'name studentId grade class number')
+        .populate('approvedBy', 'name');
+
+      res.json(attendanceRecords.map(record => ({
+        studentId: record.studentId.studentId,
+        name: record.studentId.name,
+        grade: record.studentId.grade,
+        class: record.studentId.class,
+        number: record.studentId.number,
+        timestamp: record.timestamp,
+        isLate: record.isLate,
+        lateMinutes: record.lateMinutes,
+        approvedBy: record.approvedBy ? record.approvedBy.name : null,
+        approvalReason: record.approvalReason,
+        approvalTimestamp: record.approvalTimestamp
+      })));
+    }
   } catch (error) {
-    console.error(error);
+    console.error("출석 데이터 조회 중 오류 발생:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
@@ -767,96 +858,6 @@ cron.schedule("0 0 * * *", async () => {
   }
 });
 
-// 출석 수정 API 엔드포인트
-app.post("/api/attendance/modify", verifyToken, isAdmin, async (req, res) => {
-  try {
-    const { studentId, date, status, lateReason } = req.body;
-
-    const attendance = await Attendance.findOne({
-      studentId,
-      timestamp: {
-        $gte: new Date(date).setHours(0, 0, 0, 0),
-        $lt: new Date(date).setHours(23, 59, 59, 999),
-      },
-    });
-
-    if (!attendance) {
-      return res
-        .status(404)
-        .json({ message: "해당 날짜의 출석 기록을 찾을 수 없습니다." });
-    }
-
-    attendance.isLate = status === "late";
-    attendance.lateMinutes =
-      status === "late" ? calculateLateMinutes(attendance.timestamp) : 0;
-    attendance.lateReason = status === "late" ? lateReason : null;
-
-    await attendance.save();
-
-    res.json({ message: "출석 상태가 성공적으로 수정되었습니다.", attendance });
-  } catch (error) {
-    console.error("출석 수정 중 오류 발생:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
-  }
-});
-
-// 유틸리티 함수들
-function getWorkingDays(startDate, endDate) {
-  let count = 0;
-  const curDate = new Date(startDate.getTime());
-  while (curDate <= endDate) {
-    const dayOfWeek = curDate.getDay();
-    if (dayOfWeek !== 0 && dayOfWeek !== 6) count++;
-    curDate.setDate(curDate.getDate() + 1);
-  }
-  return count;
-}
-
-// 수정된 calculateOverallStats 함수
-function calculateOverallStats(attendanceData, startDate, endDate) {
-  const stats = attendanceData.reduce(
-    (acc, curr) => {
-      acc.totalStudents++;
-      acc.totalAttendance += curr.totalAttendance;
-      acc.totalLateAttendance += curr.lateAttendance;
-      acc.totalLateMinutes += curr.totalLateMinutes;
-      return acc;
-    },
-    {
-      totalStudents: 0,
-      totalAttendance: 0,
-      totalLateAttendance: 0,
-      totalLateMinutes: 0,
-    }
-  );
-
-  const workingDays = getWorkingDays(startDate, endDate);
-
-  stats.averageAttendanceRate = (
-    (stats.totalAttendance / (stats.totalStudents * workingDays)) *
-    100
-  ).toFixed(2);
-  stats.averageLateRate =
-    stats.totalAttendance > 0
-      ? ((stats.totalLateAttendance / stats.totalAttendance) * 100).toFixed(2)
-      : 0;
-  stats.averageLateMinutes = (
-    stats.totalLateMinutes / stats.totalLateAttendance || 0
-  ).toFixed(2);
-
-  return stats;
-}
-
-function calculateLateMinutes(timestamp) {
-  const attendanceTime = new Date(timestamp);
-  const expectedTime = new Date(timestamp);
-  expectedTime.setHours(ATTENDANCE_HOUR, ATTENDANCE_MINUTE, 0, 0);
-
-  if (attendanceTime > expectedTime) {
-    return Math.floor((attendanceTime - expectedTime) / 60000); // 분 단위로 반환
-  }
-  return 0;
-}
 
 app.post(
   "/api/admin/reset-password",
@@ -904,7 +905,6 @@ app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
       { header: "출석 시간", key: "timestamp", width: 20 },
       { header: "지각 여부", key: "isLate", width: 10 },
       { header: "지각 시간(분)", key: "lateMinutes", width: 15 },
-      { header: "지각 사유", key: "lateReason", width: 30 },
     ];
 
     attendanceData.forEach((record) => {
@@ -937,93 +937,6 @@ app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-app.get("/api/attendance/date", verifyToken, isAdmin, async (req, res) => {
-  try {
-    const { date } = req.query;
-    const targetDate = new Date(date);
-    const nextDate = new Date(targetDate);
-    nextDate.setDate(nextDate.getDate() + 1);
-
-    const attendanceRecords = await Attendance.find({
-      timestamp: { $gte: targetDate, $lt: nextDate }
-    }).populate('studentId', 'name studentId');
-
-    const totalAttendance = attendanceRecords.length;
-    const onTimeAttendance = attendanceRecords.filter(record => !record.isLate).length;
-    const lateAttendance = attendanceRecords.filter(record => record.isLate).length;
-
-    const allStudents = await User.find({ isApproved: true });
-    const absentCount = allStudents.length - totalAttendance;
-
-    const studentDetails = attendanceRecords.map(record => ({
-      name: record.studentId.name,
-      studentId: record.studentId.studentId,
-      status: record.isLate ? 'late' : 'present',
-      lateMinutes: record.lateMinutes
-    }));
-
-    // 결석한 학생 추가
-    allStudents.forEach(student => {
-      if (!attendanceRecords.some(record => record.studentId.studentId === student.studentId)) {
-        studentDetails.push({
-          name: student.name,
-          studentId: student.studentId,
-          status: 'absent'
-        });
-      }
-    });
-
-    res.json({
-      totalAttendance,
-      onTimeAttendance,
-      lateAttendance,
-      absentCount,
-      studentDetails
-    });
-
-  } catch (error) {
-    console.error('날짜별 출석 데이터 조회 중 오류 발생:', error);
-    res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-  }
-});
-
-app.get("/api/dashboard/advanced", verifyToken, isAdmin, async (req, res) => {
-  try {
-    const { startDate, endDate, grade, class: classNumber } = req.query;
-
-    // 학생 필터 조건 생성
-    const studentFilter = {};
-    if (grade) studentFilter.grade = Number(grade);
-    if (classNumber) studentFilter.class = Number(classNumber);
-
-    // 해당하는 학생들의 ID 목록 가져오기
-    const studentIds = await User.find(studentFilter).distinct('_id');
-
-    // 날짜 범위와 학생 ID에 따른 출석 기록 조회
-    const attendanceRecords = await Attendance.find({
-      timestamp: {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      },
-      studentId: { $in: studentIds }
-    }).populate('studentId', 'name grade class number');
-
-    // 해당하는 모든 학생 정보 조회
-    const allStudents = await User.find({ ...studentFilter, isApproved: true });
-
-    const stats = calculateAdvancedStats(attendanceRecords, allStudents, new Date(startDate), new Date(endDate));
-    const studentDetails = calculateStudentDetails(attendanceRecords, allStudents, new Date(startDate), new Date(endDate));
-
-    res.json({
-      stats,
-      studentDetails
-    });
-
-  } catch (error) {
-    console.error('고급 대시보드 데이터 조회 중 오류 발생:', error);
-    res.status(500).json({ message: '서버 오류가 발생했습니다.' });
-  }
-});
 function calculateAdvancedStats(attendanceRecords, allStudents, startDate, endDate) {
   const totalStudents = allStudents.length;
   const totalAttendance = attendanceRecords.length;
