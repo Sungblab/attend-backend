@@ -425,8 +425,9 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     } = req.query;
     let startDate, endDate;
 
-    // 기간 설정 (이전과 동일)
+    // 기간 설정 수정
     const now = new Date();
+    now.setHours(now.getHours() + 9); // KST로 변환
     switch (period) {
       case "day":
         startDate = new Date(now.setHours(0, 0, 0, 0));
@@ -434,19 +435,19 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
         break;
       case "week":
         startDate = new Date(now.setDate(now.getDate() - now.getDay()));
-        endDate = new Date(now.setDate(now.getDate() - now.getDay() + 6));
+        endDate = new Date(now);
         break;
       case "month":
         startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        endDate = new Date(now);
         break;
       case "semester":
         startDate = new Date(now.getFullYear(), 2, 1); // 3월 1일로 가정
-        endDate = new Date(now.getFullYear(), 7, 31); // 8월 31일로 가정
+        endDate = new Date(now);
         break;
       default:
         startDate = new Date(0);
-        endDate = new Date();
+        endDate = new Date(now);
     }
 
     // 사용자 쿼리
@@ -473,7 +474,7 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     }).lean();
 
     const attendanceHistory = await AttendanceHistory.find({
-      date: { $gte: startDate, $lte: endDate },
+      date: { $gte: startDate, $lt: endDate }, // endDate는 포함하지 않음
     })
       .populate("records")
       .lean();
@@ -980,5 +981,55 @@ app.post("/api/attendance/approve", verifyToken, isAdmin, async (req, res) => {
   } catch (error) {
     console.error("출결 인정 중 오류 발생:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+});
+
+app.get("/api/attendance/date", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const { date } = req.query;
+    const targetDate = new Date(date);
+    const nextDate = new Date(targetDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+
+    const attendanceRecords = await Attendance.find({
+      timestamp: { $gte: targetDate, $lt: nextDate }
+    }).populate('studentId', 'name studentId');
+
+    const totalAttendance = attendanceRecords.length;
+    const onTimeAttendance = attendanceRecords.filter(record => !record.isLate).length;
+    const lateAttendance = attendanceRecords.filter(record => record.isLate).length;
+
+    const allStudents = await User.find({ isApproved: true });
+    const absentCount = allStudents.length - totalAttendance;
+
+    const studentDetails = attendanceRecords.map(record => ({
+      name: record.studentId.name,
+      studentId: record.studentId.studentId,
+      status: record.isLate ? 'late' : 'present',
+      lateMinutes: record.lateMinutes
+    }));
+
+    // 결석한 학생 추가
+    allStudents.forEach(student => {
+      if (!attendanceRecords.some(record => record.studentId.studentId === student.studentId)) {
+        studentDetails.push({
+          name: student.name,
+          studentId: student.studentId,
+          status: 'absent'
+        });
+      }
+    });
+
+    res.json({
+      totalAttendance,
+      onTimeAttendance,
+      lateAttendance,
+      absentCount,
+      studentDetails
+    });
+
+  } catch (error) {
+    console.error('날짜별 출석 데이터 조회 중 오류 발생:', error);
+    res.status(500).json({ message: '서버 오류가 발생했습니다.' });
   }
 });
