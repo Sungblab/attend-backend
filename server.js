@@ -423,11 +423,19 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
       page = 1,
       limit = 20,
     } = req.query;
-    let startDate, endDate;
 
-    // 기간 설정 수정
+    // 입력 검증
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
+    if (isNaN(pageNum) || isNaN(limitNum) || pageNum < 1 || limitNum < 1) {
+      return res.status(400).json({ message: "잘못된 페이지 또는 제한 값입니다." });
+    }
+
+    // 기간 설정
+    let startDate, endDate;
     const now = new Date();
     now.setHours(now.getHours() + 9); // KST로 변환
+
     switch (period) {
       case "day":
         startDate = new Date(now.setHours(0, 0, 0, 0));
@@ -450,10 +458,22 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
         endDate = new Date(now);
     }
 
-    // 사용자 쿼리
+    // 사용자 쿼리 구성
     const userQuery = {};
-    if (grade) userQuery.grade = Number(grade);
-    if (classNumber) userQuery.class = Number(classNumber);
+    if (grade) {
+      const gradeNum = Number(grade);
+      if (isNaN(gradeNum)) {
+        return res.status(400).json({ message: "잘못된 학년 값입니다." });
+      }
+      userQuery.grade = gradeNum;
+    }
+    if (classNumber) {
+      const classNum = Number(classNumber);
+      if (isNaN(classNum)) {
+        return res.status(400).json({ message: "잘못된 반 값입니다." });
+      }
+      userQuery.class = classNum;
+    }
     if (search) {
       userQuery.$or = [
         { name: { $regex: search, $options: "i" } },
@@ -461,158 +481,75 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
       ];
     }
 
-    const users = await User.find(userQuery)
-      .sort({ grade: 1, class: 1, number: 1 })
-      .skip((page - 1) * limit)
-      .limit(Number(limit))
-      .lean();
+    // 사용자 조회
+    const allStudents = await User.find(userQuery).lean();
+    const paginatedStudents = allStudents.slice((pageNum - 1) * limitNum, pageNum * limitNum);
 
     // 출석 기록 조회 (AttendanceHistory 포함)
     const attendanceRecords = await Attendance.find({
-      studentId: { $in: users.map((user) => user.studentId) },
+      studentId: { $in: allStudents.map((user) => user.studentId) },
       timestamp: { $gte: startDate, $lte: endDate },
     }).lean();
 
     const attendanceHistory = await AttendanceHistory.find({
-      date: { $gte: startDate, $lt: endDate }, // endDate는 포함하지 않음
+      date: { $gte: startDate, $lt: endDate },
     })
       .populate("records")
       .lean();
 
-    // 출석 데이터 처리
-    const attendanceData = users.map((user) => {
-      const userAttendance = attendanceRecords.filter(
-        (record) => record.studentId === user.studentId
-      );
-      const userHistoryAttendance = attendanceHistory.flatMap((history) =>
-        history.records.filter((record) => record.studentId === user.studentId)
-      );
+    // 모든 출석 기록 병합
+    const allAttendanceRecords = [
+      ...attendanceRecords,
+      ...attendanceHistory.flatMap(history => history.records),
+    ];
 
-      const allUserAttendance = [...userAttendance, ...userHistoryAttendance];
-
-      const totalAttendance = allUserAttendance.length;
-      const lateAttendance = allUserAttendance.filter(
-        (record) => record.isLate
-      ).length;
-      const totalLateMinutes = allUserAttendance.reduce(
-        (sum, record) => sum + (record.lateMinutes || 0),
-        0
-      );
-
-      let lastAttendanceTime = null;
-      let dailyLateMinutes = 0;
-      if (allUserAttendance.length > 0) {
-        const latestAttendance = allUserAttendance.reduce((latest, current) =>
-          latest.timestamp > current.timestamp ? latest : current
-        );
-        lastAttendanceTime = latestAttendance.timestamp
-          ? latestAttendance.timestamp.toISOString()
-          : null;
-        dailyLateMinutes = latestAttendance.lateMinutes || 0;
-      }
-
-      // 지각 기록 추가
-      const lateRecords = allUserAttendance
-        .filter((record) => record.isLate)
-        .map((record) => ({
-          date: record.timestamp,
-          lateMinutes: record.lateMinutes,
-        }));
-
-      // 출석 날짜와 지각 날짜 추가
-      const attendanceDates = allUserAttendance.map(
-        (record) => record.timestamp
-      );
-      const lateDates = allUserAttendance
-        .filter((record) => record.isLate)
-        .map((record) => record.timestamp);
-
-        return {
-          name: user.name,
-          studentId: user.studentId,
-          grade: user.grade,
-          class: user.class,
-          number: user.number,
-          totalAttendance,
-          lateAttendance,
-          totalLateMinutes,
-          dailyLateMinutes,
-          lastAttendanceTime,
-        attendanceRate: (
-          (totalAttendance / getWorkingDays(startDate, endDate)) *
-          100
-        ).toFixed(2),
-        lateRate:
-          totalAttendance > 0
-            ? ((lateAttendance / totalAttendance) * 100).toFixed(2)
-            : 0,
-        lateRecords,
-        attendanceDates,
-        lateDates,
-      };
-    });
+    // 학생별 상세 정보 계산
+    const studentDetails = calculateStudentDetails(allAttendanceRecords, paginatedStudents, startDate, endDate);
 
     // 전체 통계 계산
-    const overallStats = calculateOverallStats(
-      attendanceData,
-      startDate,
-      endDate
-    );
-
-    // 최우수 출석 학생 찾기
-    const bestAttendanceStudent = findBestAttendanceStudent(attendanceData);
+    const overallStats = calculateAdvancedStats(allAttendanceRecords, allStudents, startDate, endDate);
 
     // 필터링 적용
-    let filteredAttendanceData = attendanceData;
+    let filteredStudentDetails = studentDetails;
     if (attendanceStatus) {
-      filteredAttendanceData = filteredAttendanceData.filter((student) => {
+      filteredStudentDetails = filteredStudentDetails.filter((student) => {
         if (attendanceStatus === "present")
-          return student.totalAttendance > 0 && student.lateAttendance === 0;
-        if (attendanceStatus === "late") return student.lateAttendance > 0;
+          return student.totalAttendance > 0 && student.totalLateAttendance === 0;
+        if (attendanceStatus === "late") return student.totalLateAttendance > 0;
         if (attendanceStatus === "absent") return student.totalAttendance === 0;
+        return true;
       });
     }
     if (lateCount) {
-      filteredAttendanceData = filteredAttendanceData.filter(
-        (student) => student.lateAttendance >= Number(lateCount)
+      const lateCountNum = Number(lateCount);
+      if (isNaN(lateCountNum)) {
+        return res.status(400).json({ message: "잘못된 지각 횟수 값입니다." });
+      }
+      filteredStudentDetails = filteredStudentDetails.filter(
+        (student) => student.totalLateAttendance >= lateCountNum
       );
     }
 
-    // 전체 학생 수 계산 (페이지네이션을 위해)
-    const totalStudents = await User.countDocuments(userQuery);
+    // 최우수 출석 학생 찾기
+    const bestAttendanceStudent = findBestAttendanceStudent(studentDetails);
 
     res.json({
-      attendanceData: filteredAttendanceData,
+      attendanceData: filteredStudentDetails,
       overallStats,
       bestAttendanceStudent,
       period: { startDate, endDate },
       pagination: {
-        currentPage: Number(page),
-        totalPages: Math.ceil(totalStudents / limit),
-        totalItems: totalStudents,
+        currentPage: pageNum,
+        totalPages: Math.ceil(allStudents.length / limitNum),
+        totalItems: allStudents.length,
       },
     });
   } catch (error) {
     console.error("대시보드 데이터 조회 중 오류 발생:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    res.status(500).json({ message: "서버 오류가 발생했습니다.", error: error.message });
   }
 });
-// 최우수 출석 학생 찾기 함수
-function findBestAttendanceStudent(attendanceData) {
-  return attendanceData.reduce((best, current) => {
-    if (!best || current.totalAttendance > best.totalAttendance) {
-      return current;
-    } else if (
-      current.totalAttendance === best.totalAttendance &&
-      current.lateAttendance < best.lateAttendance
-    ) {
-      return current;
-    }
-    return best;
-  }, null);
-}
 
-// Get attendance records route
 // 통합된 출석 API
 app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
   try {
@@ -956,8 +893,8 @@ function calculateAdvancedStats(attendanceRecords, allStudents, startDate, endDa
   };
 }
 
-function calculateStudentDetails(attendanceRecords, allStudents, startDate, endDate) {
-  const studentMap = new Map(allStudents.map(student => [student.studentId, {
+function calculateStudentDetails(attendanceRecords, students, startDate, endDate) {
+  const studentMap = new Map(students.map(student => [student.studentId, {
     studentId: student.studentId,
     name: student.name,
     grade: student.grade,
@@ -971,7 +908,7 @@ function calculateStudentDetails(attendanceRecords, allStudents, startDate, endD
   }]));
 
   attendanceRecords.forEach(record => {
-    const studentDetail = studentMap.get(record.studentId.studentId);
+    const studentDetail = studentMap.get(record.studentId);
     if (studentDetail) {
       studentDetail.totalAttendance++;
       if (record.isLate) {
@@ -987,7 +924,14 @@ function calculateStudentDetails(attendanceRecords, allStudents, startDate, endD
     }
   });
 
+  const workingDays = getWorkingDays(startDate, endDate);
+
   return Array.from(studentMap.values())
+    .map(student => ({
+      ...student,
+      attendanceRate: ((student.totalAttendance / workingDays) * 100).toFixed(2),
+      lateRate: student.totalAttendance > 0 ? ((student.totalLateAttendance / student.totalAttendance) * 100).toFixed(2) : '0.00'
+    }))
     .sort((a, b) => {
       if (a.grade !== b.grade) return a.grade - b.grade;
       if (a.class !== b.class) return a.class - b.class;
@@ -1004,4 +948,15 @@ function getWorkingDays(startDate, endDate) {
     curDate.setDate(curDate.getDate() + 1);
   }
   return count;
+}
+
+function findBestAttendanceStudent(students) {
+  return students.reduce((best, current) => {
+    if (!best || current.totalAttendance > best.totalAttendance) {
+      return current;
+    } else if (current.totalAttendance === best.totalAttendance && current.totalLateAttendance < best.totalLateAttendance) {
+      return current;
+    }
+    return best;
+  }, null);
 }
