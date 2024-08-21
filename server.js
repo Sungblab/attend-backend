@@ -937,75 +937,6 @@ app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-app.post("/api/attendance/approve", verifyToken, isAdmin, async (req, res) => {
-  try {
-    const { studentId, reason, date } = req.body;
-
-    if (!studentId || !date) {
-      return res.status(400).json({ message: "학생 ID와 날짜는 필수 입력 항목입니다." });
-    }
-
-    // 날짜를 KST로 변환
-    const approvalDate = moment(date).tz('Asia/Seoul').startOf('day');
-    const nextDay = moment(approvalDate).add(1, 'days');
-
-    // 해당 날짜의 출석 기록 찾기
-    const attendance = await Attendance.findOne({
-      studentId,
-      timestamp: {
-        $gte: approvalDate.toDate(),
-        $lt: nextDay.toDate()
-      }
-    });
-
-    if (!attendance) {
-      return res.status(404).json({ message: "해당 날짜의 출석 기록을 찾을 수 없습니다." });
-    }
-
-    // 이미 인정된 출석인지 확인
-    if (!attendance.isLate && attendance.lateMinutes === 0) {
-      return res.status(400).json({ message: "이미 정상 출석으로 처리된 기록입니다." });
-    }
-
-    // 출석 상태 업데이트
-    attendance.isLate = false;
-    attendance.lateMinutes = 0;
-    attendance.lateReason = null;
-    attendance.approvedBy = req.user.id;
-    attendance.approvalReason = reason || "관리자 승인";
-    attendance.approvalTimestamp = new Date();
-
-    await attendance.save();
-
-    // 학생의 총 지각 시간 재계산
-    const allAttendances = await Attendance.find({ studentId });
-    const totalLateMinutes = allAttendances.reduce((sum, record) => sum + (record.lateMinutes || 0), 0);
-
-    // User 모델 업데이트
-    await User.findOneAndUpdate(
-      { studentId },
-      { $set: { totalLateMinutes: totalLateMinutes } }
-    );
-
-    res.json({ 
-      message: "출결이 성공적으로 인정되었습니다.",
-      updatedAttendance: {
-        date: attendance.timestamp,
-        isLate: attendance.isLate,
-        lateMinutes: attendance.lateMinutes,
-        approvalReason: attendance.approvalReason,
-        approvalTimestamp: attendance.approvalTimestamp
-      }
-    });
-  } catch (error) {
-    console.error("출결 인정 중 오류 발생:", error);
-    res.status(500).json({ 
-      message: "서버 오류가 발생했습니다.",
-      error: error.message
-    });
-  }
-});
-
 app.get("/api/attendance/date", verifyToken, isAdmin, async (req, res) => {
   try {
     const { date } = req.query;
@@ -1055,3 +986,91 @@ app.get("/api/attendance/date", verifyToken, isAdmin, async (req, res) => {
     res.status(500).json({ message: '서버 오류가 발생했습니다.' });
   }
 });
+
+app.get("/api/dashboard/advanced", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    // 날짜 범위에 따른 출석 기록 조회
+    const attendanceRecords = await Attendance.find({
+      timestamp: {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      }
+    }).populate('studentId', 'name grade class number');
+
+    // 모든 학생 정보 조회
+    const allStudents = await User.find({ isApproved: true });
+
+    // 통계 계산
+    const stats = calculateAdvancedStats(attendanceRecords, allStudents, new Date(startDate), new Date(endDate));
+
+    // 학생별 상세 정보 계산
+    const studentDetails = calculateStudentDetails(attendanceRecords, allStudents);
+
+    res.json({
+      stats,
+      studentDetails
+    });
+
+  } catch (error) {
+    console.error('고급 대시보드 데이터 조회 중 오류 발생:', error);
+    res.status(500).json({ message: '서버 오류가 발생했습니다.' });
+  }
+});
+
+function calculateAdvancedStats(attendanceRecords, allStudents, startDate, endDate) {
+  const totalStudents = allStudents.length;
+  const totalAttendance = attendanceRecords.length;
+  const totalLateAttendance = attendanceRecords.filter(record => record.isLate).length;
+  const totalLateMinutes = attendanceRecords.reduce((sum, record) => sum + (record.lateMinutes || 0), 0);
+
+  const workingDays = getWorkingDays(startDate, endDate);
+
+  return {
+    totalStudents,
+    totalAttendance,
+    totalLateAttendance,
+    totalLateMinutes,
+    averageAttendanceRate: ((totalAttendance / (totalStudents * workingDays)) * 100).toFixed(2),
+    averageLateRate: totalAttendance > 0 ? ((totalLateAttendance / totalAttendance) * 100).toFixed(2) : '0.00',
+    averageLateMinutes: totalLateAttendance > 0 ? (totalLateMinutes / totalLateAttendance).toFixed(2) : '0.00'
+  };
+}
+
+function calculateStudentDetails(attendanceRecords, allStudents) {
+  const studentMap = new Map(allStudents.map(student => [student.studentId, {
+    studentId: student.studentId,
+    name: student.name,
+    grade: student.grade,
+    class: student.class,
+    number: student.number,
+    totalAttendance: 0,
+    totalLateAttendance: 0,
+    totalLateMinutes: 0
+  }]));
+
+  attendanceRecords.forEach(record => {
+    const studentDetail = studentMap.get(record.studentId.studentId);
+    if (studentDetail) {
+      studentDetail.totalAttendance++;
+      if (record.isLate) {
+        studentDetail.totalLateAttendance++;
+        studentDetail.totalLateMinutes += record.lateMinutes || 0;
+      }
+    }
+  });
+
+  return Array.from(studentMap.values());
+}
+
+function getWorkingDays(startDate, endDate) {
+  let count = 0;
+  const curDate = new Date(startDate.getTime());
+  while (curDate <= endDate) {
+    const dayOfWeek = curDate.getDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) count++;
+    curDate.setDate(curDate.getDate() + 1);
+  }
+  return count;
+}
