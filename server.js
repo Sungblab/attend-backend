@@ -414,6 +414,8 @@ console.log(
 app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
   try {
     const {
+      startDate,
+      endDate,
       grade,
       class: classNumber,
       period,
@@ -434,7 +436,9 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     }
 
     // 기간 설정
-    let startDate, endDate;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999); // endDate의 끝 시간을 해당 날짜의 마지막 시간으로 설정
     const now = new Date();
     now.setHours(now.getHours() + 9); // KST로 변환
 
@@ -502,21 +506,30 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     }).lean();
 
     const attendanceHistory = await AttendanceHistory.find({
-      date: { $gte: startDate, $lt: endDate },
+      date: { $gte: start, $lte: end },
+    }).lean();
+
+    const currentAttendance = await Attendance.find({
+      timestamp: { $gte: start, $lte: end },
     }).lean();
 
     // 모든 출석 기록 병합
     const allAttendanceRecords = [
-      ...attendanceRecords,
-      ...attendanceHistory.flatMap((history) => history.records),
+      ...currentAttendance,
+      ...attendanceHistory.flatMap((history) =>
+        history.records.map((record) => ({
+          ...record,
+          timestamp: history.date, // AttendanceHistory의 각 기록에 날짜 정보 추가
+        }))
+      ),
     ];
 
     // 학생별 상세 정보 계산
     const studentDetails = calculateStudentDetails(
       allAttendanceRecords,
       paginatedStudents,
-      startDate,
-      endDate,
+      start,
+      end,
       userSummaries
     );
 
@@ -608,7 +621,12 @@ function calculateStudentDetails(
     })
   );
 
-  attendanceRecords.forEach((record) => {
+  // 날짜 범위 내의 출석 기록만 필터링
+  const filteredAttendanceRecords = attendanceRecords.filter(
+    (record) => record.timestamp >= startDate && record.timestamp <= endDate
+  );
+
+  filteredAttendanceRecords.forEach((record) => {
     const studentDetail = studentMap.get(record.studentId);
     if (studentDetail) {
       studentDetail.periodAttendance++;
@@ -617,12 +635,10 @@ function calculateStudentDetails(
         studentDetail.periodLateMinutes += record.lateMinutes || 0;
       }
 
-      // 주어진 기간 내에서 가장 최근의 출석 기록만 저장
+      // 주어진 기간 내에서 가장 최근의 출석 기록 저장
       if (
-        record.timestamp >= startDate &&
-        record.timestamp <= endDate &&
-        (!studentDetail.lastAttendanceTime ||
-          record.timestamp > studentDetail.lastAttendanceTime)
+        !studentDetail.lastAttendanceTime ||
+        record.timestamp > studentDetail.lastAttendanceTime
       ) {
         studentDetail.lastAttendanceTime = record.timestamp;
         studentDetail.lastAttendanceStatus = record.isLate ? "지각" : "정상";
