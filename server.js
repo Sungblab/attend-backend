@@ -488,14 +488,12 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     // 출석 기록 조회 (AttendanceHistory 포함)
     const attendanceRecords = await Attendance.find({
       studentId: { $in: allStudents.map((user) => user.studentId) },
-      timestamp: { $gte: startDate, $lte: endDate },
+      timestamp: { $gte: new Date(startDate), $lte: new Date(endDate) },
     }).lean();
 
     const attendanceHistory = await AttendanceHistory.find({
-      date: { $gte: startDate, $lt: endDate },
-    })
-      .populate("records")
-      .lean();
+      date: { $gte: new Date(startDate), $lt: new Date(endDate) },
+    }).lean();
 
     // 모든 출석 기록 병합
     const allAttendanceRecords = [
@@ -504,10 +502,11 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     ];
 
     // 학생별 상세 정보 계산
-    const studentDetails = calculateStudentDetails(allAttendanceRecords, paginatedStudents, startDate, endDate);
+    const studentDetails = calculateStudentDetails(allAttendanceRecords, paginatedStudents, new Date(startDate), new Date(endDate));
+
 
     // 전체 통계 계산
-    const overallStats = calculateAdvancedStats(allAttendanceRecords, allStudents, startDate, endDate);
+    const overallStats = calculateAdvancedStats(allAttendanceRecords, allStudents, new Date(startDate), new Date(endDate));
 
     // 필터링 적용
     let filteredStudentDetails = studentDetails;
@@ -754,7 +753,11 @@ app.delete(
 // 새로운 AttendanceHistory 모델 정의
 const AttendanceHistorySchema = new mongoose.Schema({
   date: { type: Date, required: true },
-  records: [{ type: mongoose.Schema.Types.ObjectId, ref: "Attendance" }],
+  records: [{
+    studentId: { type: String, required: true },
+    isLate: { type: Boolean, default: false },
+    lateMinutes: { type: Number, default: 0 }
+  }]
 });
 
 const AttendanceHistory = mongoose.model(
@@ -778,15 +781,21 @@ cron.schedule("0 0 * * *", async () => {
     });
 
     // AttendanceHistory에 어제의 기록 저장
+    const historyRecords = yesterdayAttendances.map(attendance => ({
+      studentId: attendance.studentId,
+      isLate: attendance.isLate,
+      lateMinutes: attendance.lateMinutes
+    }));
+
     await AttendanceHistory.create({
       date: yesterday,
-      records: yesterdayAttendances.map((a) => a._id),
+      records: historyRecords
     });
 
-    // 어제의 출석 상태 초기화 (예: isLate 필드를 false로 설정)
+    // 어제의 출석 상태 초기화 (isLate만 초기화)
     await Attendance.updateMany(
       { timestamp: { $gte: yesterday, $lt: today } },
-      { $set: { isLate: false, lateMinutes: 0 } }
+      { $set: { isLate: false } }
     );
 
     console.log("일일 출석 초기화 완료");
@@ -794,7 +803,6 @@ cron.schedule("0 0 * * *", async () => {
     console.error("일일 출석 초기화 중 오류 발생:", error);
   }
 });
-
 
 app.post(
   "/api/admin/reset-password",
@@ -916,8 +924,8 @@ function calculateStudentDetails(attendanceRecords, students, startDate, endDate
         studentDetail.totalLateMinutes += record.lateMinutes || 0;
       }
       
-      // 가장 최근 출석 기록 업데이트
-      if (!studentDetail.lastAttendanceTime || record.timestamp > studentDetail.lastAttendanceTime) {
+      // 가장 최근 출석 기록 업데이트 (Attendance 모델의 경우에만)
+      if (record.timestamp && (!studentDetail.lastAttendanceTime || record.timestamp > studentDetail.lastAttendanceTime)) {
         studentDetail.lastAttendanceTime = record.timestamp;
         studentDetail.lastAttendanceStatus = record.isLate ? '지각' : '정상';
       }
