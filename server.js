@@ -1018,55 +1018,155 @@ app.post(
   }
 );
 
+const express = require("express");
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const dotenv = require("dotenv");
+const cors = require("cors");
+const crypto = require("crypto");
+const cron = require("node-cron");
+const ExcelJS = require("exceljs");
+const moment = require("moment-timezone");
+dotenv.config();
+
+// ... (이전 코드는 그대로 유지)
+
 app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, grade, class: classNumber } = req.query;
 
-    // 출석 데이터 조회
-    const attendanceData = await Attendance.find({
-      timestamp: { $gte: new Date(startDate), $lte: new Date(endDate) },
-    }).populate("studentId", "name grade class number");
+    console.log("Excel download request params:", req.query);
 
-    // 엑셀 파일 생성
+    if (!startDate || !endDate) {
+      return res
+        .status(400)
+        .json({ message: "시작 날짜와 종료 날짜는 필수 입력 항목입니다." });
+    }
+
+    // KST 기준으로 날짜 변환
+    const start = moment.tz(startDate, "Asia/Seoul").startOf("day").toDate();
+    const end = moment.tz(endDate, "Asia/Seoul").endOf("day").toDate();
+
+    console.log("Parsed date range (KST):", { start, end });
+
+    // 사용자 쿼리 구성
+    const userQuery = { isApproved: true };
+    if (grade) userQuery.grade = Number(grade);
+    if (classNumber) userQuery.class = Number(classNumber);
+
+    // 사용자 조회
+    const students = await User.find(userQuery).lean();
+
+    // 현재 기간의 출석 기록 조회 (KST 기준)
+    const currentAttendance = await Attendance.find({
+      studentId: { $in: students.map((user) => user.studentId) },
+      timestamp: { $gte: start, $lte: end },
+    }).lean();
+
+    // AttendanceHistory에서 해당 기간의 기록 조회 (KST 기준)
+    const attendanceHistory = await AttendanceHistory.find({
+      date: { $gte: start, $lte: end },
+    }).lean();
+
+    // 모든 출석 기록 병합
+    const allAttendanceRecords = [
+      ...currentAttendance,
+      ...attendanceHistory.flatMap((history) =>
+        history.records.map((record) => ({
+          ...record,
+          timestamp: history.date,
+        }))
+      ),
+    ];
+
+    // 엑셀 워크북 생성
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("출석 데이터");
 
+    // 헤더 설정
     worksheet.columns = [
+      { header: "학번", key: "studentId", width: 15 },
       { header: "이름", key: "name", width: 15 },
       { header: "학년", key: "grade", width: 10 },
       { header: "반", key: "class", width: 10 },
       { header: "번호", key: "number", width: 10 },
-      { header: "출석 시간", key: "timestamp", width: 20 },
-      { header: "지각 여부", key: "isLate", width: 10 },
-      { header: "지각 시간(분)", key: "lateMinutes", width: 15 },
+      { header: "총 출석 횟수", key: "totalAttendance", width: 15 },
+      { header: "기간 출석 횟수", key: "periodAttendance", width: 15 },
+      { header: "기간 지각 횟수", key: "periodLateAttendance", width: 15 },
+      { header: "기간 지각 시간(분)", key: "periodLateMinutes", width: 20 },
+      { header: "출석률(%)", key: "attendanceRate", width: 15 },
+      { header: "지각률(%)", key: "lateRate", width: 15 },
+      { header: "최근 출석 시간", key: "lastAttendanceTime", width: 20 },
+      { header: "최근 출석 상태", key: "lastAttendanceStatus", width: 15 },
     ];
 
-    attendanceData.forEach((record) => {
+    // 학생별 데이터 계산 및 엑셀에 추가
+    const workingDays = getWorkingDays(start, end);
+    students.forEach((student) => {
+      const studentRecords = allAttendanceRecords.filter(
+        (record) => record.studentId === student.studentId
+      );
+      const periodAttendance = studentRecords.length;
+      const periodLateAttendance = studentRecords.filter(
+        (record) => record.isLate
+      ).length;
+      const periodLateMinutes = studentRecords.reduce(
+        (sum, record) => sum + (record.lateMinutes || 0),
+        0
+      );
+
+      const lastAttendance = studentRecords.sort(
+        (a, b) => b.timestamp - a.timestamp
+      )[0];
+
       worksheet.addRow({
-        name: record.studentId.name,
-        grade: record.studentId.grade,
-        class: record.studentId.class,
-        number: record.studentId.number,
-        timestamp: record.timestamp,
-        isLate: record.isLate ? "지각" : "정상",
-        lateMinutes: record.lateMinutes,
-        lateReason: record.lateReason || "",
+        studentId: student.studentId,
+        name: student.name,
+        grade: student.grade,
+        class: student.class,
+        number: student.number,
+        totalAttendance: student.totalAttendance || 0,
+        periodAttendance,
+        periodLateAttendance,
+        periodLateMinutes,
+        attendanceRate: ((periodAttendance / workingDays) * 100).toFixed(2),
+        lateRate:
+          periodAttendance > 0
+            ? ((periodLateAttendance / periodAttendance) * 100).toFixed(2)
+            : "0.00",
+        lastAttendanceTime: lastAttendance
+          ? moment(lastAttendance.timestamp).format("YYYY-MM-DD HH:mm:ss")
+          : "없음",
+        lastAttendanceStatus: lastAttendance
+          ? lastAttendance.isLate
+            ? "지각"
+            : "정상"
+          : "없음",
       });
     });
 
+    // 파일 이름 설정
+    const fileName = `attendance_data_${moment(start).format(
+      "YYYYMMDD"
+    )}_${moment(end).format("YYYYMMDD")}.xlsx`;
+
+    // 응답 헤더 설정
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=attendance_data.xlsx"
-    );
+    res.setHeader("Content-Disposition", `attachment; filename=${fileName}`);
 
+    // 엑셀 파일 전송
     await workbook.xlsx.write(res);
     res.end();
+
+    console.log("Excel file generated and sent successfully");
   } catch (error) {
     console.error("엑셀 파일 생성 중 오류 발생:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    res
+      .status(500)
+      .json({ message: "서버 오류가 발생했습니다.", error: error.message });
   }
 });
