@@ -756,7 +756,6 @@ function getWorkingDays(startDate, endDate) {
 }
 
 // 통합된 출석 API
-// 통합된 출석 API
 app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
   try {
     const { date } = req.query;
@@ -813,6 +812,23 @@ app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
   } catch (error) {
     console.error("출석 데이터 조회 중 오류 발생:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+});
+
+app.get("/api/student-info", verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "사용자를 찾을 수 없습니다." });
+    }
+    res.json({ success: true, studentId: user.studentId, name: user.name });
+  } catch (error) {
+    console.error("Error fetching student info:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "서버 오류가 발생했습니다." });
   }
 });
 
