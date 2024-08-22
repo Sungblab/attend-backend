@@ -485,14 +485,19 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     const allStudents = await User.find(userQuery).lean();
     const paginatedStudents = allStudents.slice((pageNum - 1) * limitNum, pageNum * limitNum);
 
-    // 출석 기록 조회 (AttendanceHistory 포함)
+    // 누적 출석 데이터 조회
+    const userSummaries = await UserAttendanceSummary.find({
+      studentId: { $in: allStudents.map((user) => user.studentId) }
+    }).lean();
+
+    // 현재 기간의 출석 기록 조회
     const attendanceRecords = await Attendance.find({
       studentId: { $in: allStudents.map((user) => user.studentId) },
-      timestamp: { $gte: new Date(startDate), $lte: new Date(endDate) },
+      timestamp: { $gte: startDate, $lte: endDate },
     }).lean();
 
     const attendanceHistory = await AttendanceHistory.find({
-      date: { $gte: new Date(startDate), $lt: new Date(endDate) },
+      date: { $gte: startDate, $lt: endDate },
     }).lean();
 
     // 모든 출석 기록 병합
@@ -502,20 +507,19 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     ];
 
     // 학생별 상세 정보 계산
-    const studentDetails = calculateStudentDetails(allAttendanceRecords, paginatedStudents, new Date(startDate), new Date(endDate));
-
+    const studentDetails = calculateStudentDetails(allAttendanceRecords, paginatedStudents, startDate, endDate, userSummaries);
 
     // 전체 통계 계산
-    const overallStats = calculateAdvancedStats(allAttendanceRecords, allStudents, new Date(startDate), new Date(endDate));
+    const overallStats = calculateAdvancedStats(allAttendanceRecords, allStudents, startDate, endDate, userSummaries);
 
     // 필터링 적용
     let filteredStudentDetails = studentDetails;
     if (attendanceStatus) {
       filteredStudentDetails = filteredStudentDetails.filter((student) => {
         if (attendanceStatus === "present")
-          return student.totalAttendance > 0 && student.totalLateAttendance === 0;
-        if (attendanceStatus === "late") return student.totalLateAttendance > 0;
-        if (attendanceStatus === "absent") return student.totalAttendance === 0;
+          return student.periodAttendance > 0 && student.periodLateAttendance === 0;
+        if (attendanceStatus === "late") return student.periodLateAttendance > 0;
+        if (attendanceStatus === "absent") return student.periodAttendance === 0;
         return true;
       });
     }
@@ -525,7 +529,7 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
         return res.status(400).json({ message: "잘못된 지각 횟수 값입니다." });
       }
       filteredStudentDetails = filteredStudentDetails.filter(
-        (student) => student.totalLateAttendance >= lateCountNum
+        (student) => student.periodLateAttendance >= lateCountNum
       );
     }
 
@@ -548,6 +552,105 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     res.status(500).json({ message: "서버 오류가 발생했습니다.", error: error.message });
   }
 });
+
+function calculateStudentDetails(attendanceRecords, students, startDate, endDate, userSummaries) {
+  const studentMap = new Map(students.map(student => {
+    const summary = userSummaries.find(s => s.studentId === student.studentId) || {};
+    return [student.studentId, {
+      studentId: student.studentId,
+      name: student.name,
+      grade: student.grade,
+      class: student.class,
+      number: student.number,
+      totalAttendance: summary.totalAttendance || 0,
+      totalLateAttendance: summary.totalLateAttendance || 0,
+      totalLateMinutes: summary.totalLateMinutes || 0,
+      periodAttendance: 0,
+      periodLateAttendance: 0,
+      periodLateMinutes: 0,
+      lastAttendanceTime: null,
+      lastAttendanceStatus: '미출석'
+    }];
+  }));
+
+  attendanceRecords.forEach(record => {
+    const studentDetail = studentMap.get(record.studentId);
+    if (studentDetail) {
+      studentDetail.periodAttendance++;
+      if (record.isLate) {
+        studentDetail.periodLateAttendance++;
+        studentDetail.periodLateMinutes += record.lateMinutes || 0;
+      }
+      
+      if (record.timestamp && (!studentDetail.lastAttendanceTime || record.timestamp > studentDetail.lastAttendanceTime)) {
+        studentDetail.lastAttendanceTime = record.timestamp;
+        studentDetail.lastAttendanceStatus = record.isLate ? '지각' : '정상';
+      }
+    }
+  });
+
+  const workingDays = getWorkingDays(startDate, endDate);
+
+  return Array.from(studentMap.values())
+    .map(student => ({
+      ...student,
+      attendanceRate: ((student.periodAttendance / workingDays) * 100).toFixed(2),
+      lateRate: student.periodAttendance > 0 ? ((student.periodLateAttendance / student.periodAttendance) * 100).toFixed(2) : '0.00'
+    }))
+    .sort((a, b) => {
+      if (a.grade !== b.grade) return a.grade - b.grade;
+      if (a.class !== b.class) return a.class - b.class;
+      return a.number - b.number;
+    });
+}
+
+function calculateAdvancedStats(attendanceRecords, allStudents, startDate, endDate, userSummaries) {
+  const totalStudents = allStudents.length;
+  const periodAttendance = attendanceRecords.length;
+  const periodLateAttendance = attendanceRecords.filter(record => record.isLate).length;
+  const periodLateMinutes = attendanceRecords.reduce((sum, record) => sum + (record.lateMinutes || 0), 0);
+
+  const totalAttendance = userSummaries.reduce((sum, summary) => sum + summary.totalAttendance, 0);
+  const totalLateAttendance = userSummaries.reduce((sum, summary) => sum + summary.totalLateAttendance, 0);
+  const totalLateMinutes = userSummaries.reduce((sum, summary) => sum + summary.totalLateMinutes, 0);
+
+  const workingDays = getWorkingDays(startDate, endDate);
+
+  return {
+    totalStudents,
+    periodAttendance,
+    periodLateAttendance,
+    periodLateMinutes,
+    totalAttendance,
+    totalLateAttendance,
+    totalLateMinutes,
+    averageAttendanceRate: ((periodAttendance / (totalStudents * workingDays)) * 100).toFixed(2),
+    averageLateRate: periodAttendance > 0 ? ((periodLateAttendance / periodAttendance) * 100).toFixed(2) : '0.00',
+    averageLateMinutes: periodLateAttendance > 0 ? (periodLateMinutes / periodLateAttendance).toFixed(2) : '0.00'
+  };
+}
+
+function findBestAttendanceStudent(students) {
+  return students.reduce((best, current) => {
+    if (!best || current.periodAttendance > best.periodAttendance) {
+      return current;
+    } else if (current.periodAttendance === best.periodAttendance && current.periodLateAttendance < best.periodLateAttendance) {
+      return current;
+    }
+    return best;
+  }, null);
+}
+
+function getWorkingDays(startDate, endDate) {
+  let count = 0;
+  const curDate = new Date(startDate.getTime());
+  while (curDate <= endDate) {
+    const dayOfWeek = curDate.getDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) count++;
+    curDate.setDate(curDate.getDate() + 1);
+  }
+  return count;
+}
 
 // 통합된 출석 API
 app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
@@ -792,17 +895,39 @@ cron.schedule("0 0 * * *", async () => {
       records: historyRecords
     });
 
-    // 어제의 출석 상태 초기화 (isLate만 초기화)
-    await Attendance.updateMany(
-      { timestamp: { $gte: yesterday, $lt: today } },
-      { $set: { isLate: false } }
-    );
+    // 누적 데이터 (UserAttendanceSummary) 업데이트
+    for (const attendance of yesterdayAttendances) {
+      await UserAttendanceSummary.findOneAndUpdate(
+        { studentId: attendance.studentId },
+        {
+          $inc: {
+            totalAttendance: 1,
+            totalLateAttendance: attendance.isLate ? 1 : 0,
+            totalLateMinutes: attendance.lateMinutes
+          }
+        },
+        { upsert: true, new: true }
+      );
+    }
 
-    console.log("일일 출석 초기화 완료");
+    // 새로운 날을 위해 Attendance 컬렉션 초기화
+    await Attendance.deleteMany({});
+
+    console.log("일일 출석 초기화 및 누적 데이터 업데이트 완료");
   } catch (error) {
     console.error("일일 출석 초기화 중 오류 발생:", error);
   }
 });
+
+// UserAttendanceSummary 모델 정의 (필요한 경우 추가)
+const UserAttendanceSummarySchema = new mongoose.Schema({
+  studentId: { type: String, required: true, unique: true },
+  totalAttendance: { type: Number, default: 0 },
+  totalLateAttendance: { type: Number, default: 0 },
+  totalLateMinutes: { type: Number, default: 0 }
+});
+
+const UserAttendanceSummary = mongoose.model("UserAttendanceSummary", UserAttendanceSummarySchema);
 
 app.post(
   "/api/admin/reset-password",
@@ -882,89 +1007,3 @@ app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-function calculateAdvancedStats(attendanceRecords, allStudents, startDate, endDate) {
-  const totalStudents = allStudents.length;
-  const totalAttendance = attendanceRecords.length;
-  const totalLateAttendance = attendanceRecords.filter(record => record.isLate).length;
-  const totalLateMinutes = attendanceRecords.reduce((sum, record) => sum + (record.lateMinutes || 0), 0);
-
-  const workingDays = getWorkingDays(startDate, endDate);
-
-  return {
-    totalStudents,
-    totalAttendance,
-    totalLateAttendance,
-    totalLateMinutes,
-    averageAttendanceRate: ((totalAttendance / (totalStudents * workingDays)) * 100).toFixed(2),
-    averageLateRate: totalAttendance > 0 ? ((totalLateAttendance / totalAttendance) * 100).toFixed(2) : '0.00',
-    averageLateMinutes: totalLateAttendance > 0 ? (totalLateMinutes / totalLateAttendance).toFixed(2) : '0.00'
-  };
-}
-
-function calculateStudentDetails(attendanceRecords, students, startDate, endDate) {
-  const studentMap = new Map(students.map(student => [student.studentId, {
-    studentId: student.studentId,
-    name: student.name,
-    grade: student.grade,
-    class: student.class,
-    number: student.number,
-    totalAttendance: 0,
-    totalLateAttendance: 0,
-    totalLateMinutes: 0,
-    lastAttendanceTime: null,
-    lastAttendanceStatus: '미출석'
-  }]));
-
-  attendanceRecords.forEach(record => {
-    const studentDetail = studentMap.get(record.studentId);
-    if (studentDetail) {
-      studentDetail.totalAttendance++;
-      if (record.isLate) {
-        studentDetail.totalLateAttendance++;
-        studentDetail.totalLateMinutes += record.lateMinutes || 0;
-      }
-      
-      // 가장 최근 출석 기록 업데이트 (Attendance 모델의 경우에만)
-      if (record.timestamp && (!studentDetail.lastAttendanceTime || record.timestamp > studentDetail.lastAttendanceTime)) {
-        studentDetail.lastAttendanceTime = record.timestamp;
-        studentDetail.lastAttendanceStatus = record.isLate ? '지각' : '정상';
-      }
-    }
-  });
-
-  const workingDays = getWorkingDays(startDate, endDate);
-
-  return Array.from(studentMap.values())
-    .map(student => ({
-      ...student,
-      attendanceRate: ((student.totalAttendance / workingDays) * 100).toFixed(2),
-      lateRate: student.totalAttendance > 0 ? ((student.totalLateAttendance / student.totalAttendance) * 100).toFixed(2) : '0.00'
-    }))
-    .sort((a, b) => {
-      if (a.grade !== b.grade) return a.grade - b.grade;
-      if (a.class !== b.class) return a.class - b.class;
-      return a.number - b.number;
-    });
-}
-
-function getWorkingDays(startDate, endDate) {
-  let count = 0;
-  const curDate = new Date(startDate.getTime());
-  while (curDate <= endDate) {
-    const dayOfWeek = curDate.getDay();
-    if (dayOfWeek !== 0 && dayOfWeek !== 6) count++;
-    curDate.setDate(curDate.getDate() + 1);
-  }
-  return count;
-}
-
-function findBestAttendanceStudent(students) {
-  return students.reduce((best, current) => {
-    if (!best || current.totalAttendance > best.totalAttendance) {
-      return current;
-    } else if (current.totalAttendance === best.totalAttendance && current.totalLateAttendance < best.totalLateAttendance) {
-      return current;
-    }
-    return best;
-  }, null);
-}
