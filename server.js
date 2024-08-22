@@ -428,7 +428,6 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
 
     console.log("Dashboard API called with params:", req.query);
 
-    // 입력 검증
     if (!startDate || !endDate) {
       return res
         .status(400)
@@ -443,14 +442,13 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
         .json({ message: "잘못된 페이지 또는 제한 값입니다." });
     }
 
-    // startDate와 endDate를 Date 객체로 변환
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    // KST 기준으로 날짜 변환
+    const start = moment.tz(startDate, "Asia/Seoul").startOf("day").toDate();
+    const end = moment.tz(endDate, "Asia/Seoul").endOf("day").toDate();
 
-    console.log("Parsed date range:", { start, end });
+    console.log("Parsed date range (KST):", { start, end });
 
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    if (!start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
       return res.status(400).json({ message: "잘못된 날짜 형식입니다." });
     }
 
@@ -495,17 +493,23 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
 
     console.log("User summaries found:", userSummaries.length);
 
-    // 현재 기간의 출석 기록 조회
+    // 현재 기간의 출석 기록 조회 (KST 기준)
     const currentAttendance = await Attendance.find({
       studentId: { $in: allStudents.map((user) => user.studentId) },
-      timestamp: { $gte: start, $lte: end },
+      timestamp: {
+        $gte: moment(start).tz("Asia/Seoul").startOf("day").toDate(),
+        $lte: moment(end).tz("Asia/Seoul").endOf("day").toDate(),
+      },
     }).lean();
 
     console.log("Current attendance records found:", currentAttendance.length);
 
-    // AttendanceHistory에서 해당 기간의 기록 조회
+    // AttendanceHistory에서 해당 기간의 기록 조회 (KST 기준)
     const attendanceHistory = await AttendanceHistory.find({
-      date: { $gte: start, $lte: end },
+      date: {
+        $gte: moment(start).tz("Asia/Seoul").startOf("day").toDate(),
+        $lte: moment(end).tz("Asia/Seoul").endOf("day").toDate(),
+      },
     }).lean();
 
     console.log("Attendance history records found:", attendanceHistory.length);
@@ -573,7 +577,7 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
       attendanceData: filteredStudentDetails,
       overallStats,
       bestAttendanceStudent,
-      period: { startDate, endDate },
+      period: { startDate: start, endDate: end },
       pagination: {
         currentPage: pageNum,
         totalPages: Math.ceil(allStudents.length / limitNum),
@@ -582,9 +586,11 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error("대시보드 데이터 조회 중 오류 발생:", error);
-    res
-      .status(500)
-      .json({ message: "서버 오류가 발생했습니다.", error: error.message });
+    res.status(500).json({
+      message: "서버 오류가 발생했습니다.",
+      error: error.message,
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
   }
 });
 
@@ -620,27 +626,28 @@ function calculateStudentDetails(
     })
   );
 
-  // 날짜 범위 내의 출석 기록만 필터링
-  const filteredAttendanceRecords = attendanceRecords.filter(
-    (record) => record.timestamp >= startDate && record.timestamp <= endDate
-  );
-
-  filteredAttendanceRecords.forEach((record) => {
+  attendanceRecords.forEach((record) => {
     const studentDetail = studentMap.get(record.studentId);
     if (studentDetail) {
-      studentDetail.periodAttendance++;
-      if (record.isLate) {
-        studentDetail.periodLateAttendance++;
-        studentDetail.periodLateMinutes += record.lateMinutes || 0;
-      }
-
-      // 주어진 기간 내에서 가장 최근의 출석 기록 저장
+      // KST로 변환하여 비교
+      const recordDate = moment(record.timestamp).tz("Asia/Seoul");
       if (
-        !studentDetail.lastAttendanceTime ||
-        record.timestamp > studentDetail.lastAttendanceTime
+        recordDate.isSameOrAfter(startDate) &&
+        recordDate.isSameOrBefore(endDate)
       ) {
-        studentDetail.lastAttendanceTime = record.timestamp;
-        studentDetail.lastAttendanceStatus = record.isLate ? "지각" : "정상";
+        studentDetail.periodAttendance++;
+        if (record.isLate) {
+          studentDetail.periodLateAttendance++;
+          studentDetail.periodLateMinutes += record.lateMinutes || 0;
+        }
+
+        if (
+          !studentDetail.lastAttendanceTime ||
+          recordDate.isAfter(moment(studentDetail.lastAttendanceTime))
+        ) {
+          studentDetail.lastAttendanceTime = record.timestamp;
+          studentDetail.lastAttendanceStatus = record.isLate ? "지각" : "정상";
+        }
       }
     }
   });
