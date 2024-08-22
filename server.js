@@ -426,7 +426,15 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
       limit = 20,
     } = req.query;
 
+    console.log("Dashboard API called with params:", req.query);
+
     // 입력 검증
+    if (!startDate || !endDate) {
+      return res
+        .status(400)
+        .json({ message: "시작 날짜와 종료 날짜는 필수 입력 항목입니다." });
+    }
+
     const pageNum = Number(page);
     const limitNum = Number(limit);
     if (isNaN(pageNum) || isNaN(limitNum) || pageNum < 1 || limitNum < 1) {
@@ -435,33 +443,15 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
         .json({ message: "잘못된 페이지 또는 제한 값입니다." });
     }
 
-    // 기간 설정
+    // startDate와 endDate를 Date 객체로 변환
     const start = new Date(startDate);
     const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999); // endDate의 끝 시간을 해당 날짜의 마지막 시간으로 설정
-    const now = new Date();
-    now.setHours(now.getHours() + 9); // KST로 변환
+    end.setHours(23, 59, 59, 999);
 
-    switch (period) {
-      case "day":
-        startDate = new Date(now.setHours(0, 0, 0, 0));
-        endDate = new Date(now.setHours(23, 59, 59, 999));
-        break;
-      case "week":
-        startDate = new Date(now.setDate(now.getDate() - now.getDay()));
-        endDate = new Date(now);
-        break;
-      case "month":
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        endDate = new Date(now);
-        break;
-      case "semester":
-        startDate = new Date(now.getFullYear(), 2, 1); // 3월 1일로 가정
-        endDate = new Date(now);
-        break;
-      default:
-        startDate = new Date(0);
-        endDate = new Date(now);
+    console.log("Parsed date range:", { start, end });
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ message: "잘못된 날짜 형식입니다." });
     }
 
     // 사용자 쿼리 구성
@@ -487,8 +477,12 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
       ];
     }
 
+    console.log("User query:", userQuery);
+
     // 사용자 조회
     const allStudents = await User.find(userQuery).lean();
+    console.log("Total students found:", allStudents.length);
+
     const paginatedStudents = allStudents.slice(
       (pageNum - 1) * limitNum,
       pageNum * limitNum
@@ -499,19 +493,22 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
       studentId: { $in: allStudents.map((user) => user.studentId) },
     }).lean();
 
+    console.log("User summaries found:", userSummaries.length);
+
     // 현재 기간의 출석 기록 조회
-    const attendanceRecords = await Attendance.find({
+    const currentAttendance = await Attendance.find({
       studentId: { $in: allStudents.map((user) => user.studentId) },
-      timestamp: { $gte: startDate, $lte: endDate },
+      timestamp: { $gte: start, $lte: end },
     }).lean();
 
+    console.log("Current attendance records found:", currentAttendance.length);
+
+    // AttendanceHistory에서 해당 기간의 기록 조회
     const attendanceHistory = await AttendanceHistory.find({
       date: { $gte: start, $lte: end },
     }).lean();
 
-    const currentAttendance = await Attendance.find({
-      timestamp: { $gte: start, $lte: end },
-    }).lean();
+    console.log("Attendance history records found:", attendanceHistory.length);
 
     // 모든 출석 기록 병합
     const allAttendanceRecords = [
@@ -519,10 +516,12 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
       ...attendanceHistory.flatMap((history) =>
         history.records.map((record) => ({
           ...record,
-          timestamp: history.date, // AttendanceHistory의 각 기록에 날짜 정보 추가
+          timestamp: history.date,
         }))
       ),
     ];
+
+    console.log("Total attendance records:", allAttendanceRecords.length);
 
     // 학생별 상세 정보 계산
     const studentDetails = calculateStudentDetails(
@@ -537,8 +536,8 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     const overallStats = calculateAdvancedStats(
       allAttendanceRecords,
       allStudents,
-      startDate,
-      endDate,
+      start,
+      end,
       userSummaries
     );
 
