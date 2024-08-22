@@ -732,9 +732,10 @@ function getWorkingDays(startDate, endDate) {
 }
 
 // 통합된 출석 API
+// 통합된 출석 API
 app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
   try {
-    const { date, startDate, endDate } = req.query;
+    const { date } = req.query;
 
     if (date) {
       // 특정 날짜의 출석 데이터 조회
@@ -781,86 +782,13 @@ app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
         absentCount,
         studentDetails,
       });
-    } else if (startDate && endDate) {
-      // 기간별 출석 데이터 조회
-      const attendanceRecords = await Attendance.find({
-        timestamp: { $gte: new Date(startDate), $lte: new Date(endDate) },
-      })
-        .populate("studentId", "name studentId grade class number")
-        .sort({ timestamp: -1 });
-
-      const summary = {
-        totalAttendance: attendanceRecords.length,
-        onTimeAttendance: attendanceRecords.filter((r) => !r.isLate).length,
-        lateAttendance: attendanceRecords.filter((r) => r.isLate).length,
-        totalLateMinutes: attendanceRecords.reduce(
-          (sum, r) => sum + (r.lateMinutes || 0),
-          0
-        ),
-      };
-
-      res.json({
-        startDate,
-        endDate,
-        summary,
-        records: attendanceRecords.map((record) => ({
-          studentId: record.studentId.studentId,
-          name: record.studentId.name,
-          grade: record.studentId.grade,
-          class: record.studentId.class,
-          number: record.studentId.number,
-          timestamp: record.timestamp,
-          isLate: record.isLate,
-          lateMinutes: record.lateMinutes,
-          approvedBy: record.approvedBy ? record.approvedBy.name : null,
-          approvalReason: record.approvalReason,
-          approvalTimestamp: record.approvalTimestamp,
-        })),
-      });
     } else {
-      // 전체 출석 기록 조회 (기본값)
-      const attendanceRecords = await Attendance.find()
-        .sort({ timestamp: -1 })
-        .populate("studentId", "name studentId grade class number")
-        .populate("approvedBy", "name");
-
-      res.json(
-        attendanceRecords.map((record) => ({
-          studentId: record.studentId.studentId,
-          name: record.studentId.name,
-          grade: record.studentId.grade,
-          class: record.studentId.class,
-          number: record.studentId.number,
-          timestamp: record.timestamp,
-          isLate: record.isLate,
-          lateMinutes: record.lateMinutes,
-          approvedBy: record.approvedBy ? record.approvedBy.name : null,
-          approvalReason: record.approvalReason,
-          approvalTimestamp: record.approvalTimestamp,
-        }))
-      );
+      // 날짜가 제공되지 않은 경우 에러 응답
+      res.status(400).json({ message: "날짜를 지정해주세요." });
     }
   } catch (error) {
     console.error("출석 데이터 조회 중 오류 발생:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
-  }
-});
-
-// Get student info route
-app.get("/api/student-info", verifyToken, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "사용자를 찾을 수 없습니다." });
-    }
-    res.json({ success: true, studentId: user.studentId, name: user.name });
-  } catch (error) {
-    console.error(error);
-    res
-      .status(500)
-      .json({ success: false, message: "서버 오류가 발생했습니다." });
   }
 });
 
