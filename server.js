@@ -617,8 +617,10 @@ function calculateStudentDetails(
         studentDetail.periodLateMinutes += record.lateMinutes || 0;
       }
 
+      // 주어진 기간 내에서 가장 최근의 출석 기록만 저장
       if (
-        record.timestamp &&
+        record.timestamp >= startDate &&
+        record.timestamp <= endDate &&
         (!studentDetail.lastAttendanceTime ||
           record.timestamp > studentDetail.lastAttendanceTime)
       ) {
