@@ -7,7 +7,7 @@ const cors = require("cors");
 const crypto = require("crypto");
 const cron = require("node-cron");
 const ExcelJS = require("exceljs");
-const moment = require('moment-timezone');
+const moment = require("moment-timezone");
 dotenv.config();
 
 const app = express();
@@ -45,9 +45,9 @@ const AttendanceSchema = new mongoose.Schema({
   isLate: { type: Boolean, default: false },
   lateMinutes: { type: Number, default: 0 },
   lateReason: { type: String, default: null },
-  approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   approvalReason: String,
-  approvalTimestamp: Date
+  approvalTimestamp: Date,
 });
 
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
@@ -374,7 +374,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     const lateMinutes = isLate
       ? Math.floor((kstNow - attendanceTime) / 60000)
       : 0;
-    
+
     const attendance = new Attendance({
       studentId,
       timestamp: now,
@@ -389,8 +389,8 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     );
 
     const responseMessage = isLate
-    ? `"${studentId}" "${student.name}" 출석 성공. ${lateMinutes}분 지각입니다.`
-    : `"${studentId}" "${student.name}" 출석 성공.`;
+      ? `"${studentId}" "${student.name}" 출석 성공. ${lateMinutes}분 지각입니다.`
+      : `"${studentId}" "${student.name}" 출석 성공.`;
 
     res.status(201).json({
       message: responseMessage,
@@ -428,7 +428,9 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     const pageNum = Number(page);
     const limitNum = Number(limit);
     if (isNaN(pageNum) || isNaN(limitNum) || pageNum < 1 || limitNum < 1) {
-      return res.status(400).json({ message: "잘못된 페이지 또는 제한 값입니다." });
+      return res
+        .status(400)
+        .json({ message: "잘못된 페이지 또는 제한 값입니다." });
     }
 
     // 기간 설정
@@ -483,11 +485,14 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
 
     // 사용자 조회
     const allStudents = await User.find(userQuery).lean();
-    const paginatedStudents = allStudents.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+    const paginatedStudents = allStudents.slice(
+      (pageNum - 1) * limitNum,
+      pageNum * limitNum
+    );
 
     // 누적 출석 데이터 조회
     const userSummaries = await UserAttendanceSummary.find({
-      studentId: { $in: allStudents.map((user) => user.studentId) }
+      studentId: { $in: allStudents.map((user) => user.studentId) },
     }).lean();
 
     // 현재 기간의 출석 기록 조회
@@ -503,23 +508,39 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     // 모든 출석 기록 병합
     const allAttendanceRecords = [
       ...attendanceRecords,
-      ...attendanceHistory.flatMap(history => history.records),
+      ...attendanceHistory.flatMap((history) => history.records),
     ];
 
     // 학생별 상세 정보 계산
-    const studentDetails = calculateStudentDetails(allAttendanceRecords, paginatedStudents, startDate, endDate, userSummaries);
+    const studentDetails = calculateStudentDetails(
+      allAttendanceRecords,
+      paginatedStudents,
+      startDate,
+      endDate,
+      userSummaries
+    );
 
     // 전체 통계 계산
-    const overallStats = calculateAdvancedStats(allAttendanceRecords, allStudents, startDate, endDate, userSummaries);
+    const overallStats = calculateAdvancedStats(
+      allAttendanceRecords,
+      allStudents,
+      startDate,
+      endDate,
+      userSummaries
+    );
 
     // 필터링 적용
     let filteredStudentDetails = studentDetails;
     if (attendanceStatus) {
       filteredStudentDetails = filteredStudentDetails.filter((student) => {
         if (attendanceStatus === "present")
-          return student.periodAttendance > 0 && student.periodLateAttendance === 0;
-        if (attendanceStatus === "late") return student.periodLateAttendance > 0;
-        if (attendanceStatus === "absent") return student.periodAttendance === 0;
+          return (
+            student.periodAttendance > 0 && student.periodLateAttendance === 0
+          );
+        if (attendanceStatus === "late")
+          return student.periodLateAttendance > 0;
+        if (attendanceStatus === "absent")
+          return student.periodAttendance === 0;
         return true;
       });
     }
@@ -549,31 +570,45 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     });
   } catch (error) {
     console.error("대시보드 데이터 조회 중 오류 발생:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다.", error: error.message });
+    res
+      .status(500)
+      .json({ message: "서버 오류가 발생했습니다.", error: error.message });
   }
 });
 
-function calculateStudentDetails(attendanceRecords, students, startDate, endDate, userSummaries) {
-  const studentMap = new Map(students.map(student => {
-    const summary = userSummaries.find(s => s.studentId === student.studentId) || {};
-    return [student.studentId, {
-      studentId: student.studentId,
-      name: student.name,
-      grade: student.grade,
-      class: student.class,
-      number: student.number,
-      totalAttendance: summary.totalAttendance || 0,
-      totalLateAttendance: summary.totalLateAttendance || 0,
-      totalLateMinutes: summary.totalLateMinutes || 0,
-      periodAttendance: 0,
-      periodLateAttendance: 0,
-      periodLateMinutes: 0,
-      lastAttendanceTime: null,
-      lastAttendanceStatus: '미출석'
-    }];
-  }));
+function calculateStudentDetails(
+  attendanceRecords,
+  students,
+  startDate,
+  endDate,
+  userSummaries
+) {
+  const studentMap = new Map(
+    students.map((student) => {
+      const summary =
+        userSummaries.find((s) => s.studentId === student.studentId) || {};
+      return [
+        student.studentId,
+        {
+          studentId: student.studentId,
+          name: student.name,
+          grade: student.grade,
+          class: student.class,
+          number: student.number,
+          totalAttendance: summary.totalAttendance || 0,
+          totalLateAttendance: summary.totalLateAttendance || 0,
+          totalLateMinutes: summary.totalLateMinutes || 0,
+          periodAttendance: 0,
+          periodLateAttendance: 0,
+          periodLateMinutes: 0,
+          lastAttendanceTime: null,
+          lastAttendanceStatus: "미출석",
+        },
+      ];
+    })
+  );
 
-  attendanceRecords.forEach(record => {
+  attendanceRecords.forEach((record) => {
     const studentDetail = studentMap.get(record.studentId);
     if (studentDetail) {
       studentDetail.periodAttendance++;
@@ -581,10 +616,14 @@ function calculateStudentDetails(attendanceRecords, students, startDate, endDate
         studentDetail.periodLateAttendance++;
         studentDetail.periodLateMinutes += record.lateMinutes || 0;
       }
-      
-      if (record.timestamp && (!studentDetail.lastAttendanceTime || record.timestamp > studentDetail.lastAttendanceTime)) {
+
+      if (
+        record.timestamp &&
+        (!studentDetail.lastAttendanceTime ||
+          record.timestamp > studentDetail.lastAttendanceTime)
+      ) {
         studentDetail.lastAttendanceTime = record.timestamp;
-        studentDetail.lastAttendanceStatus = record.isLate ? '지각' : '정상';
+        studentDetail.lastAttendanceStatus = record.isLate ? "지각" : "정상";
       }
     }
   });
@@ -592,10 +631,18 @@ function calculateStudentDetails(attendanceRecords, students, startDate, endDate
   const workingDays = getWorkingDays(startDate, endDate);
 
   return Array.from(studentMap.values())
-    .map(student => ({
+    .map((student) => ({
       ...student,
-      attendanceRate: ((student.periodAttendance / workingDays) * 100).toFixed(2),
-      lateRate: student.periodAttendance > 0 ? ((student.periodLateAttendance / student.periodAttendance) * 100).toFixed(2) : '0.00'
+      attendanceRate: ((student.periodAttendance / workingDays) * 100).toFixed(
+        2
+      ),
+      lateRate:
+        student.periodAttendance > 0
+          ? (
+              (student.periodLateAttendance / student.periodAttendance) *
+              100
+            ).toFixed(2)
+          : "0.00",
     }))
     .sort((a, b) => {
       if (a.grade !== b.grade) return a.grade - b.grade;
@@ -604,15 +651,35 @@ function calculateStudentDetails(attendanceRecords, students, startDate, endDate
     });
 }
 
-function calculateAdvancedStats(attendanceRecords, allStudents, startDate, endDate, userSummaries) {
+function calculateAdvancedStats(
+  attendanceRecords,
+  allStudents,
+  startDate,
+  endDate,
+  userSummaries
+) {
   const totalStudents = allStudents.length;
   const periodAttendance = attendanceRecords.length;
-  const periodLateAttendance = attendanceRecords.filter(record => record.isLate).length;
-  const periodLateMinutes = attendanceRecords.reduce((sum, record) => sum + (record.lateMinutes || 0), 0);
+  const periodLateAttendance = attendanceRecords.filter(
+    (record) => record.isLate
+  ).length;
+  const periodLateMinutes = attendanceRecords.reduce(
+    (sum, record) => sum + (record.lateMinutes || 0),
+    0
+  );
 
-  const totalAttendance = userSummaries.reduce((sum, summary) => sum + summary.totalAttendance, 0);
-  const totalLateAttendance = userSummaries.reduce((sum, summary) => sum + summary.totalLateAttendance, 0);
-  const totalLateMinutes = userSummaries.reduce((sum, summary) => sum + summary.totalLateMinutes, 0);
+  const totalAttendance = userSummaries.reduce(
+    (sum, summary) => sum + summary.totalAttendance,
+    0
+  );
+  const totalLateAttendance = userSummaries.reduce(
+    (sum, summary) => sum + summary.totalLateAttendance,
+    0
+  );
+  const totalLateMinutes = userSummaries.reduce(
+    (sum, summary) => sum + summary.totalLateMinutes,
+    0
+  );
 
   const workingDays = getWorkingDays(startDate, endDate);
 
@@ -624,9 +691,18 @@ function calculateAdvancedStats(attendanceRecords, allStudents, startDate, endDa
     totalAttendance,
     totalLateAttendance,
     totalLateMinutes,
-    averageAttendanceRate: ((periodAttendance / (totalStudents * workingDays)) * 100).toFixed(2),
-    averageLateRate: periodAttendance > 0 ? ((periodLateAttendance / periodAttendance) * 100).toFixed(2) : '0.00',
-    averageLateMinutes: periodLateAttendance > 0 ? (periodLateMinutes / periodLateAttendance).toFixed(2) : '0.00'
+    averageAttendanceRate: (
+      (periodAttendance / (totalStudents * workingDays)) *
+      100
+    ).toFixed(2),
+    averageLateRate:
+      periodAttendance > 0
+        ? ((periodLateAttendance / periodAttendance) * 100).toFixed(2)
+        : "0.00",
+    averageLateMinutes:
+      periodLateAttendance > 0
+        ? (periodLateMinutes / periodLateAttendance).toFixed(2)
+        : "0.00",
   };
 }
 
@@ -634,7 +710,10 @@ function findBestAttendanceStudent(students) {
   return students.reduce((best, current) => {
     if (!best || current.periodAttendance > best.periodAttendance) {
       return current;
-    } else if (current.periodAttendance === best.periodAttendance && current.periodLateAttendance < best.periodLateAttendance) {
+    } else if (
+      current.periodAttendance === best.periodAttendance &&
+      current.periodLateAttendance < best.periodLateAttendance
+    ) {
       return current;
     }
     return best;
@@ -664,28 +743,34 @@ app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
       nextDate.setDate(nextDate.getDate() + 1);
 
       const attendanceRecords = await Attendance.find({
-        timestamp: { $gte: targetDate, $lt: nextDate }
-      }).populate('studentId', 'name studentId grade class number');
+        timestamp: { $gte: targetDate, $lt: nextDate },
+      }).populate("studentId", "name studentId grade class number");
 
       const allStudents = await User.find({ isApproved: true });
 
-      const studentDetails = allStudents.map(student => {
-        const record = attendanceRecords.find(r => r.studentId.studentId === student.studentId);
+      const studentDetails = allStudents.map((student) => {
+        const record = attendanceRecords.find(
+          (r) => r.studentId.studentId === student.studentId
+        );
         return {
           name: student.name,
           studentId: student.studentId,
           grade: student.grade,
           class: student.class,
           number: student.number,
-          status: record ? (record.isLate ? 'late' : 'present') : 'absent',
+          status: record ? (record.isLate ? "late" : "present") : "absent",
           lateMinutes: record ? record.lateMinutes : 0,
-          timestamp: record ? record.timestamp : null
+          timestamp: record ? record.timestamp : null,
         };
       });
 
       const totalAttendance = attendanceRecords.length;
-      const onTimeAttendance = attendanceRecords.filter(record => !record.isLate).length;
-      const lateAttendance = attendanceRecords.filter(record => record.isLate).length;
+      const onTimeAttendance = attendanceRecords.filter(
+        (record) => !record.isLate
+      ).length;
+      const lateAttendance = attendanceRecords.filter(
+        (record) => record.isLate
+      ).length;
       const absentCount = allStudents.length - totalAttendance;
 
       res.json({
@@ -694,27 +779,31 @@ app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
         onTimeAttendance,
         lateAttendance,
         absentCount,
-        studentDetails
+        studentDetails,
       });
     } else if (startDate && endDate) {
       // 기간별 출석 데이터 조회
       const attendanceRecords = await Attendance.find({
-        timestamp: { $gte: new Date(startDate), $lte: new Date(endDate) }
-      }).populate('studentId', 'name studentId grade class number')
+        timestamp: { $gte: new Date(startDate), $lte: new Date(endDate) },
+      })
+        .populate("studentId", "name studentId grade class number")
         .sort({ timestamp: -1 });
 
       const summary = {
         totalAttendance: attendanceRecords.length,
-        onTimeAttendance: attendanceRecords.filter(r => !r.isLate).length,
-        lateAttendance: attendanceRecords.filter(r => r.isLate).length,
-        totalLateMinutes: attendanceRecords.reduce((sum, r) => sum + (r.lateMinutes || 0), 0)
+        onTimeAttendance: attendanceRecords.filter((r) => !r.isLate).length,
+        lateAttendance: attendanceRecords.filter((r) => r.isLate).length,
+        totalLateMinutes: attendanceRecords.reduce(
+          (sum, r) => sum + (r.lateMinutes || 0),
+          0
+        ),
       };
 
       res.json({
         startDate,
         endDate,
         summary,
-        records: attendanceRecords.map(record => ({
+        records: attendanceRecords.map((record) => ({
           studentId: record.studentId.studentId,
           name: record.studentId.name,
           grade: record.studentId.grade,
@@ -725,29 +814,31 @@ app.get("/api/attendance", verifyToken, isAdmin, async (req, res) => {
           lateMinutes: record.lateMinutes,
           approvedBy: record.approvedBy ? record.approvedBy.name : null,
           approvalReason: record.approvalReason,
-          approvalTimestamp: record.approvalTimestamp
-        }))
+          approvalTimestamp: record.approvalTimestamp,
+        })),
       });
     } else {
       // 전체 출석 기록 조회 (기본값)
       const attendanceRecords = await Attendance.find()
         .sort({ timestamp: -1 })
-        .populate('studentId', 'name studentId grade class number')
-        .populate('approvedBy', 'name');
+        .populate("studentId", "name studentId grade class number")
+        .populate("approvedBy", "name");
 
-      res.json(attendanceRecords.map(record => ({
-        studentId: record.studentId.studentId,
-        name: record.studentId.name,
-        grade: record.studentId.grade,
-        class: record.studentId.class,
-        number: record.studentId.number,
-        timestamp: record.timestamp,
-        isLate: record.isLate,
-        lateMinutes: record.lateMinutes,
-        approvedBy: record.approvedBy ? record.approvedBy.name : null,
-        approvalReason: record.approvalReason,
-        approvalTimestamp: record.approvalTimestamp
-      })));
+      res.json(
+        attendanceRecords.map((record) => ({
+          studentId: record.studentId.studentId,
+          name: record.studentId.name,
+          grade: record.studentId.grade,
+          class: record.studentId.class,
+          number: record.studentId.number,
+          timestamp: record.timestamp,
+          isLate: record.isLate,
+          lateMinutes: record.lateMinutes,
+          approvedBy: record.approvedBy ? record.approvedBy.name : null,
+          approvalReason: record.approvalReason,
+          approvalTimestamp: record.approvalTimestamp,
+        }))
+      );
     }
   } catch (error) {
     console.error("출석 데이터 조회 중 오류 발생:", error);
@@ -856,11 +947,13 @@ app.delete(
 // 새로운 AttendanceHistory 모델 정의
 const AttendanceHistorySchema = new mongoose.Schema({
   date: { type: Date, required: true },
-  records: [{
-    studentId: { type: String, required: true },
-    isLate: { type: Boolean, default: false },
-    lateMinutes: { type: Number, default: 0 }
-  }]
+  records: [
+    {
+      studentId: { type: String, required: true },
+      isLate: { type: Boolean, default: false },
+      lateMinutes: { type: Number, default: 0 },
+    },
+  ],
 });
 
 const AttendanceHistory = mongoose.model(
@@ -884,15 +977,15 @@ cron.schedule("0 0 * * *", async () => {
     });
 
     // AttendanceHistory에 어제의 기록 저장
-    const historyRecords = yesterdayAttendances.map(attendance => ({
+    const historyRecords = yesterdayAttendances.map((attendance) => ({
       studentId: attendance.studentId,
       isLate: attendance.isLate,
-      lateMinutes: attendance.lateMinutes
+      lateMinutes: attendance.lateMinutes,
     }));
 
     await AttendanceHistory.create({
       date: yesterday,
-      records: historyRecords
+      records: historyRecords,
     });
 
     // 누적 데이터 (UserAttendanceSummary) 업데이트
@@ -903,8 +996,8 @@ cron.schedule("0 0 * * *", async () => {
           $inc: {
             totalAttendance: 1,
             totalLateAttendance: attendance.isLate ? 1 : 0,
-            totalLateMinutes: attendance.lateMinutes
-          }
+            totalLateMinutes: attendance.lateMinutes,
+          },
         },
         { upsert: true, new: true }
       );
@@ -924,10 +1017,13 @@ const UserAttendanceSummarySchema = new mongoose.Schema({
   studentId: { type: String, required: true, unique: true },
   totalAttendance: { type: Number, default: 0 },
   totalLateAttendance: { type: Number, default: 0 },
-  totalLateMinutes: { type: Number, default: 0 }
+  totalLateMinutes: { type: Number, default: 0 },
 });
 
-const UserAttendanceSummary = mongoose.model("UserAttendanceSummary", UserAttendanceSummarySchema);
+const UserAttendanceSummary = mongoose.model(
+  "UserAttendanceSummary",
+  UserAttendanceSummarySchema
+);
 
 app.post(
   "/api/admin/reset-password",
@@ -1006,4 +1102,3 @@ app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
-
