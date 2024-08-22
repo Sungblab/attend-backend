@@ -1018,20 +1018,6 @@ app.post(
   }
 );
 
-const express = require("express");
-const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const dotenv = require("dotenv");
-const cors = require("cors");
-const crypto = require("crypto");
-const cron = require("node-cron");
-const ExcelJS = require("exceljs");
-const moment = require("moment-timezone");
-dotenv.config();
-
-// ... (이전 코드는 그대로 유지)
-
 app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
   try {
     const { startDate, endDate, grade, class: classNumber } = req.query;
