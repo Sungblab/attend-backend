@@ -332,52 +332,46 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     }
 
     const now = new Date();
-    const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000); // KST로 변환
-    console.log(`현재 시간 (KST): ${kstNow.toISOString()}`);
+    const kstNow = moment(now).tz("Asia/Seoul");
+    console.log(`현재 시간 (KST): ${kstNow.format()}`);
 
-    const today = new Date(
-      kstNow.getFullYear(),
-      kstNow.getMonth(),
-      kstNow.getDate()
-    );
-    console.log(`오늘 날짜 (KST): ${today.toISOString()}`);
+    const today = kstNow.startOf('day');
+    console.log(`오늘 날짜 (KST): ${today.format()}`);
 
     // 같은 날 중복 출석 확인
     const existingAttendance = await Attendance.findOne({
       studentId,
       timestamp: {
-        $gte: new Date(today.getTime() - 9 * 60 * 60 * 1000),
-        $lt: new Date(today.getTime() + 15 * 60 * 60 * 1000),
+        $gte: today.toDate(),
+        $lt: moment(today).add(1, 'day').toDate(),
       },
     });
     if (existingAttendance) {
       console.log(
-        `중복 출석 시도 (KST): ${studentId}, ${kstNow.toISOString()}`
+        `중복 출석 시도 (KST): ${studentId}, ${kstNow.format()}`
       );
       return res.status(400).json({ message: "이미 오늘 출석했습니다." });
     }
 
-    const attendanceTime = new Date(today);
-    attendanceTime.setHours(ATTENDANCE_HOUR, ATTENDANCE_MINUTE, 0, 0);
-    console.log(`출석 기준 시간 (KST): ${attendanceTime.toISOString()}`);
+    const attendanceTime = moment(today).set({hour: ATTENDANCE_HOUR, minute: ATTENDANCE_MINUTE, second: 0});
+    console.log(`출석 기준 시간 (KST): ${attendanceTime.format()}`);
 
-    const absenceTime = new Date(today);
-    absenceTime.setHours(9, 0, 0, 0);
-    console.log(`결석 기준 시간 (KST): ${absenceTime.toISOString()}`);
+    const absenceTime = moment(today).set({hour: 9, minute: 0, second: 0});
+    console.log(`결석 기준 시간 (KST): ${absenceTime.format()}`);
 
-    if (kstNow >= absenceTime) {
-      console.log(`결석 처리 (KST): ${studentId}, ${kstNow.toISOString()}`);
+    if (kstNow.isSameOrAfter(absenceTime)) {
+      console.log(`결석 처리 (KST): ${studentId}, ${kstNow.format()}`);
       return res.status(400).json({ message: "결석 처리되었습니다." });
     }
 
-    const isLate = kstNow > attendanceTime;
+    const isLate = kstNow.isAfter(attendanceTime);
     const lateMinutes = isLate
-      ? Math.floor((kstNow - attendanceTime) / 60000)
+      ? kstNow.diff(attendanceTime, 'minutes')
       : 0;
 
     const attendance = new Attendance({
       studentId,
-      timestamp: now,
+      timestamp: kstNow.toDate(),
       isLate,
       lateMinutes,
     });
@@ -385,7 +379,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     await attendance.save();
 
     console.log(
-      `출석 기록 (KST): 학생 ID ${studentId}, 시간 ${kstNow.toISOString()}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
+      `출석 기록 (KST): 학생 ID ${studentId}, 시간 ${kstNow.format()}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
     );
 
     const responseMessage = isLate
@@ -632,8 +626,8 @@ function calculateStudentDetails(
       // KST로 변환하여 비교
       const recordDate = moment(record.timestamp).tz("Asia/Seoul");
       if (
-        recordDate.isSameOrAfter(startDate) &&
-        recordDate.isSameOrBefore(endDate)
+        recordDate.isSameOrAfter(moment(startDate).startOf('day')) &&
+        recordDate.isSameOrBefore(moment(endDate).endOf('day'))
       ) {
         studentDetail.periodAttendance++;
         if (record.isLate) {
