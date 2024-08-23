@@ -359,42 +359,41 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 
     const attendanceTime = new Date(today);
     attendanceTime.setHours(ATTENDANCE_HOUR, ATTENDANCE_MINUTE, 0, 0);
-    console.log(`출석 기준 시간 (KST): ${attendanceTime.toISOString()}`);
-
-    const absenceTime = new Date(today);
-    absenceTime.setHours(9, 0, 0, 0);
-    console.log(`결석 기준 시간 (KST): ${absenceTime.toISOString()}`);
-
-    if (kstNow >= absenceTime) {
-      console.log(`결석 처리 (KST): ${studentId}, ${kstNow.toISOString()}`);
-      return res.status(400).json({ message: "결석 처리되었습니다." });
+    
+    const lateTime = new Date(today);
+    lateTime.setHours(9, 0, 0, 0);
+    
+    let attendanceStatus = 'present';
+    let lateMinutes = 0;
+    
+    if (kstNow > attendanceTime && kstNow < lateTime) {
+      attendanceStatus = 'late';
+      lateMinutes = Math.floor((kstNow - attendanceTime) / 60000);
+    } else if (kstNow >= lateTime) {
+      attendanceStatus = 'absent';
     }
-
-    const isLate = kstNow > attendanceTime;
-    const lateMinutes = isLate
-      ? Math.floor((kstNow - attendanceTime) / 60000)
-      : 0;
-
+    
     const attendance = new Attendance({
       studentId,
       timestamp: now,
-      isLate,
+      status: attendanceStatus,
       lateMinutes,
     });
-
+    
     await attendance.save();
-
-    console.log(
-      `출석 기록 (KST): 학생 ID ${studentId}, 시간 ${kstNow.toISOString()}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
-    );
-
-    const responseMessage = isLate
-      ? `"${studentId}" "${student.name}" 출석 성공. ${lateMinutes}분 지각입니다.`
-      : `"${studentId}" "${student.name}" 출석 성공.`;
-
+    
+    let responseMessage = `"${studentId}" "${student.name}" `;
+    if (attendanceStatus === 'present') {
+      responseMessage += "출석 성공.";
+    } else if (attendanceStatus === 'late') {
+      responseMessage += `출석 성공. ${lateMinutes}분 지각입니다.`;
+    } else {
+      responseMessage += "결석 처리되었습니다.";
+    }
+    
     res.status(201).json({
       message: responseMessage,
-      isLate,
+      status: attendanceStatus,
       lateMinutes,
     });
   } catch (error) {
