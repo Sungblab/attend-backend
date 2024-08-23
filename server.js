@@ -363,11 +363,8 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     let isLate = false;
     let isAbsent = false;
     let lateMinutes = 0;
-
-    if (kstNow.isSameOrAfter(absenceTime)) {
-      isAbsent = true;
-      console.log(`결석 처리 (KST): ${studentId}, ${kstNow.format()}`);
-    } else if (kstNow.isAfter(attendanceTime)) {
+    
+    if (kstNow.isAfter(attendanceTime)) {
       isLate = true;
       lateMinutes = kstNow.diff(attendanceTime, 'minutes');
       console.log(`지각 처리 (KST): ${studentId}, ${kstNow.format()}, ${lateMinutes}분 지각`);
@@ -412,6 +409,19 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 console.log(
   `출석 기준 시간: ${ATTENDANCE_HOUR}시 ${ATTENDANCE_MINUTE}분 (KST)`
 );
+
+// 모든 날짜/시간 처리에 KST 적용
+const kstNow = moment().tz("Asia/Seoul");
+const today = kstNow.startOf('day');
+
+// 날짜 범위 설정 시
+const start = moment.tz(startDate, "Asia/Seoul").startOf("day");
+const end = moment.tz(endDate, "Asia/Seoul").endOf("day");
+
+// 비교 시
+if (kstNow.isSameOrAfter(moment(otherDate).tz("Asia/Seoul"))) {
+  // 로직
+}
 
 // 대시보드 API 엔드포인트 수정
 app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
@@ -497,13 +507,27 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     console.log("User summaries found:", userSummaries.length);
 
     // 현재 기간의 출석 기록 조회 (KST 기준)
-    const currentAttendance = await Attendance.find({
-      studentId: { $in: allStudents.map((user) => user.studentId) },
-      timestamp: {
-        $gte: moment(start).tz("Asia/Seoul").startOf("day").toDate(),
-        $lte: moment(end).tz("Asia/Seoul").endOf("day").toDate(),
-      },
-    }).lean();
+    const currentDate = moment().tz("Asia/Seoul").startOf("day");
+    const isToday = moment(end).isSame(currentDate, 'day');
+    
+    let currentAttendance;
+    if (isToday) {
+      currentAttendance = await Attendance.find({
+        studentId: { $in: allStudents.map((user) => user.studentId) },
+        timestamp: {
+          $gte: moment(start).tz("Asia/Seoul").startOf("day").toDate(),
+          $lte: moment().tz("Asia/Seoul").toDate(),
+        },
+      }).lean();
+    } else {
+      currentAttendance = await Attendance.find({
+        studentId: { $in: allStudents.map((user) => user.studentId) },
+        timestamp: {
+          $gte: moment(start).tz("Asia/Seoul").startOf("day").toDate(),
+          $lte: moment(end).tz("Asia/Seoul").endOf("day").toDate(),
+        },
+      }).lean();
+    }
 
     console.log("Current attendance records found:", currentAttendance.length);
 
