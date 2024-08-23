@@ -332,34 +332,15 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       return res.status(400).json({ message: "승인되지 않은 학생입니다." });
     }
 
-    const now = new Date();
     const kstNow = moment(now).tz("Asia/Seoul");
     console.log(`현재 시간 (KST): ${kstNow.format()}`);
-
+    
     const today = kstNow.startOf('day');
     console.log(`오늘 날짜 (KST): ${today.format()}`);
-
-    // 같은 날 중복 출석 확인
-    const existingAttendance = await Attendance.findOne({
-      studentId,
-      timestamp: {
-        $gte: today.toDate(),
-        $lt: moment(today).add(1, 'day').toDate(),
-      },
-    });
-    if (existingAttendance) {
-      console.log(
-        `중복 출석 시도 (KST): ${studentId}, ${kstNow.format()}`
-      );
-      return res.status(400).json({ message: "이미 오늘 출석했습니다." });
-    }
-
+    
     const attendanceTime = moment(today).set({hour: ATTENDANCE_HOUR, minute: ATTENDANCE_MINUTE, second: 0});
     console.log(`출석 기준 시간 (KST): ${attendanceTime.format()}`);
-
-    const absenceTime = moment(today).set({hour: 9, minute: 0, second: 0});
-    console.log(`결석 기준 시간 (KST): ${absenceTime.format()}`);
-
+    
     let isLate = false;
     let isAbsent = false;
     let lateMinutes = 0;
@@ -371,7 +352,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     } else {
       console.log(`정상 출석 처리 (KST): ${studentId}, ${kstNow.format()}`);
     }
-
+    
     const attendance = new Attendance({
       studentId,
       timestamp: kstNow.toDate(),
@@ -379,9 +360,9 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       lateMinutes,
       isAbsent
     });
-
+    
     await attendance.save();
-
+    
     let responseMessage;
     if (isAbsent) {
       responseMessage = `"${studentId}" "${student.name}" 결석 처리되었습니다.`;
@@ -390,7 +371,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     } else {
       responseMessage = `"${studentId}" "${student.name}" 출석 성공.`;
     }
-
+    
     res.status(201).json({
       message: responseMessage,
       isLate,
