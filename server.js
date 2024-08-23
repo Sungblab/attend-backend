@@ -48,6 +48,7 @@ const AttendanceSchema = new mongoose.Schema({
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   approvalReason: String,
   approvalTimestamp: Date,
+  isAbsent: { type: Boolean, default: false },
 });
 
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
@@ -359,37 +360,45 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     const absenceTime = moment(today).set({hour: 9, minute: 0, second: 0});
     console.log(`결석 기준 시간 (KST): ${absenceTime.format()}`);
 
-    if (kstNow.isSameOrAfter(absenceTime)) {
-      console.log(`결석 처리 (KST): ${studentId}, ${kstNow.format()}`);
-      return res.status(400).json({ message: "결석 처리되었습니다." });
-    }
+    let isLate = false;
+    let isAbsent = false;
+    let lateMinutes = 0;
 
-    const isLate = kstNow.isAfter(attendanceTime);
-    const lateMinutes = isLate
-      ? kstNow.diff(attendanceTime, 'minutes')
-      : 0;
+    if (kstNow.isSameOrAfter(absenceTime)) {
+      isAbsent = true;
+      console.log(`결석 처리 (KST): ${studentId}, ${kstNow.format()}`);
+    } else if (kstNow.isAfter(attendanceTime)) {
+      isLate = true;
+      lateMinutes = kstNow.diff(attendanceTime, 'minutes');
+      console.log(`지각 처리 (KST): ${studentId}, ${kstNow.format()}, ${lateMinutes}분 지각`);
+    } else {
+      console.log(`정상 출석 처리 (KST): ${studentId}, ${kstNow.format()}`);
+    }
 
     const attendance = new Attendance({
       studentId,
       timestamp: kstNow.toDate(),
       isLate,
       lateMinutes,
+      isAbsent
     });
 
     await attendance.save();
 
-    console.log(
-      `출석 기록 (KST): 학생 ID ${studentId}, 시간 ${kstNow.format()}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
-    );
-
-    const responseMessage = isLate
-      ? `"${studentId}" "${student.name}" 출석 성공. ${lateMinutes}분 지각입니다.`
-      : `"${studentId}" "${student.name}" 출석 성공.`;
+    let responseMessage;
+    if (isAbsent) {
+      responseMessage = `"${studentId}" "${student.name}" 결석 처리되었습니다.`;
+    } else if (isLate) {
+      responseMessage = `"${studentId}" "${student.name}" 출석 성공. ${lateMinutes}분 지각입니다.`;
+    } else {
+      responseMessage = `"${studentId}" "${student.name}" 출석 성공.`;
+    }
 
     res.status(201).json({
       message: responseMessage,
       isLate,
       lateMinutes,
+      isAbsent
     });
   } catch (error) {
     console.error("출석 기록 중 오류 발생:", error);
