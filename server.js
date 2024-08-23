@@ -410,19 +410,6 @@ console.log(
   `출석 기준 시간: ${ATTENDANCE_HOUR}시 ${ATTENDANCE_MINUTE}분 (KST)`
 );
 
-// 모든 날짜/시간 처리에 KST 적용
-const kstNow = moment().tz("Asia/Seoul");
-const today = kstNow.startOf('day');
-
-// 날짜 범위 설정 시
-const start = moment.tz(startDate, "Asia/Seoul").startOf("day");
-const end = moment.tz(endDate, "Asia/Seoul").endOf("day");
-
-// 비교 시
-if (kstNow.isSameOrAfter(moment(otherDate).tz("Asia/Seoul"))) {
-  // 로직
-}
-
 // 대시보드 API 엔드포인트 수정
 app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
   try {
