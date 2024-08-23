@@ -48,7 +48,6 @@ const AttendanceSchema = new mongoose.Schema({
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   approvalReason: String,
   approvalTimestamp: Date,
-  isAbsent: { type: Boolean, default: false },
 });
 
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
@@ -332,51 +331,71 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       return res.status(400).json({ message: "승인되지 않은 학생입니다." });
     }
 
-    const kstNow = moment(now).tz("Asia/Seoul");
-    console.log(`현재 시간 (KST): ${kstNow.format()}`);
-    
-    const today = kstNow.startOf('day');
-    console.log(`오늘 날짜 (KST): ${today.format()}`);
-    
-    const attendanceTime = moment(today).set({hour: ATTENDANCE_HOUR, minute: ATTENDANCE_MINUTE, second: 0});
-    console.log(`출석 기준 시간 (KST): ${attendanceTime.format()}`);
-    
-    let isLate = false;
-    let isAbsent = false;
-    let lateMinutes = 0;
-    
-    if (kstNow.isAfter(attendanceTime)) {
-      isLate = true;
-      lateMinutes = kstNow.diff(attendanceTime, 'minutes');
-      console.log(`지각 처리 (KST): ${studentId}, ${kstNow.format()}, ${lateMinutes}분 지각`);
-    } else {
-      console.log(`정상 출석 처리 (KST): ${studentId}, ${kstNow.format()}`);
+    const now = new Date();
+    const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000); // KST로 변환
+    console.log(`현재 시간 (KST): ${kstNow.toISOString()}`);
+
+    const today = new Date(
+      kstNow.getFullYear(),
+      kstNow.getMonth(),
+      kstNow.getDate()
+    );
+    console.log(`오늘 날짜 (KST): ${today.toISOString()}`);
+
+    // 같은 날 중복 출석 확인
+    const existingAttendance = await Attendance.findOne({
+      studentId,
+      timestamp: {
+        $gte: new Date(today.getTime() - 9 * 60 * 60 * 1000),
+        $lt: new Date(today.getTime() + 15 * 60 * 60 * 1000),
+      },
+    });
+    if (existingAttendance) {
+      console.log(
+        `중복 출석 시도 (KST): ${studentId}, ${kstNow.toISOString()}`
+      );
+      return res.status(400).json({ message: "이미 오늘 출석했습니다." });
     }
-    
+
+    const attendanceTime = new Date(today);
+    attendanceTime.setHours(ATTENDANCE_HOUR, ATTENDANCE_MINUTE, 0, 0);
+    console.log(`출석 기준 시간 (KST): ${attendanceTime.toISOString()}`);
+
+    const absenceTime = new Date(today);
+    absenceTime.setHours(9, 0, 0, 0);
+    console.log(`결석 기준 시간 (KST): ${absenceTime.toISOString()}`);
+
+    if (kstNow >= absenceTime) {
+      console.log(`결석 처리 (KST): ${studentId}, ${kstNow.toISOString()}`);
+      return res.status(400).json({ message: "결석 처리되었습니다." });
+    }
+
+    const isLate = kstNow > attendanceTime;
+    const lateMinutes = isLate
+      ? Math.floor((kstNow - attendanceTime) / 60000)
+      : 0;
+
     const attendance = new Attendance({
       studentId,
-      timestamp: kstNow.toDate(),
+      timestamp: now,
       isLate,
       lateMinutes,
-      isAbsent
     });
-    
+
     await attendance.save();
-    
-    let responseMessage;
-    if (isAbsent) {
-      responseMessage = `"${studentId}" "${student.name}" 결석 처리되었습니다.`;
-    } else if (isLate) {
-      responseMessage = `"${studentId}" "${student.name}" 출석 성공. ${lateMinutes}분 지각입니다.`;
-    } else {
-      responseMessage = `"${studentId}" "${student.name}" 출석 성공.`;
-    }
-    
+
+    console.log(
+      `출석 기록 (KST): 학생 ID ${studentId}, 시간 ${kstNow.toISOString()}, 지각 여부 ${isLate}, 지각 시간 ${lateMinutes}분`
+    );
+
+    const responseMessage = isLate
+      ? `"${studentId}" "${student.name}" 출석 성공. ${lateMinutes}분 지각입니다.`
+      : `"${studentId}" "${student.name}" 출석 성공.`;
+
     res.status(201).json({
       message: responseMessage,
       isLate,
       lateMinutes,
-      isAbsent
     });
   } catch (error) {
     console.error("출석 기록 중 오류 발생:", error);
@@ -475,27 +494,13 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
     console.log("User summaries found:", userSummaries.length);
 
     // 현재 기간의 출석 기록 조회 (KST 기준)
-    const currentDate = moment().tz("Asia/Seoul").startOf("day");
-    const isToday = moment(end).isSame(currentDate, 'day');
-    
-    let currentAttendance;
-    if (isToday) {
-      currentAttendance = await Attendance.find({
-        studentId: { $in: allStudents.map((user) => user.studentId) },
-        timestamp: {
-          $gte: moment(start).tz("Asia/Seoul").startOf("day").toDate(),
-          $lte: moment().tz("Asia/Seoul").toDate(),
-        },
-      }).lean();
-    } else {
-      currentAttendance = await Attendance.find({
-        studentId: { $in: allStudents.map((user) => user.studentId) },
-        timestamp: {
-          $gte: moment(start).tz("Asia/Seoul").startOf("day").toDate(),
-          $lte: moment(end).tz("Asia/Seoul").endOf("day").toDate(),
-        },
-      }).lean();
-    }
+    const currentAttendance = await Attendance.find({
+      studentId: { $in: allStudents.map((user) => user.studentId) },
+      timestamp: {
+        $gte: moment(start).tz("Asia/Seoul").startOf("day").toDate(),
+        $lte: moment(end).tz("Asia/Seoul").endOf("day").toDate(),
+      },
+    }).lean();
 
     console.log("Current attendance records found:", currentAttendance.length);
 
@@ -627,8 +632,8 @@ function calculateStudentDetails(
       // KST로 변환하여 비교
       const recordDate = moment(record.timestamp).tz("Asia/Seoul");
       if (
-        recordDate.isSameOrAfter(moment(startDate).startOf('day')) &&
-        recordDate.isSameOrBefore(moment(endDate).endOf('day'))
+        recordDate.isSameOrAfter(startDate) &&
+        recordDate.isSameOrBefore(endDate)
       ) {
         studentDetail.periodAttendance++;
         if (record.isLate) {
