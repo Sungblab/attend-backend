@@ -7,7 +7,6 @@ const crypto = require("crypto");
 const cron = require("node-cron");
 const ExcelJS = require("exceljs");
 const moment = require("moment-timezone");
-dotenv.config();
 
 const app = express();
 
@@ -64,7 +63,7 @@ const DailyAttendanceSummary = mongoose.model(
 const ATTENDANCE_HOUR = 24;
 const ATTENDANCE_MINUTE = 3;
 const LATE_HOUR = 24;
-const LATE_MINUTE = 20;
+const LATE_MINUTE = 25;
 
 // Helper functions 추가
 function getKoreanTime(date = new Date()) {
