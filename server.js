@@ -63,7 +63,7 @@ const DailyAttendanceSummary = mongoose.model(
 const ATTENDANCE_HOUR = 24;
 const ATTENDANCE_MINUTE = 3;
 const LATE_HOUR = 24;
-const LATE_MINUTE = 27;
+const LATE_MINUTE = 35;
 
 // Helper functions 추가
 function getKoreanTime(date = new Date()) {
@@ -462,27 +462,50 @@ app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-app.post("/api/attendance", verifyToken, async (req, res) => {
+app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   try {
-    const { studentId } = req.body;
-    const timestamp = new Date();
-    const { status, lateMinutes } = determineAttendanceStatus(timestamp);
+    const { encryptedData } = req.body;
 
+    // 암호화된 데이터 복호화
+    const [ivHex, encryptedHex] = encryptedData.split(":");
+    const iv = Buffer.from(ivHex, "hex");
+    const encrypted = Buffer.from(encryptedHex, "hex");
+    const decipher = crypto.createDecipheriv(
+      "aes-256-cbc",
+      Buffer.from(process.env.ENCRYPTION_KEY),
+      iv
+    );
+    let decrypted = decipher.update(encrypted);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    const [studentId, timestamp] = decrypted.toString().split("|");
+
+    // 출석 상태 결정
+    const { status, lateMinutes } = determineAttendanceStatus(
+      new Date(parseInt(timestamp))
+    );
+
+    // 출석 기록 생성 및 저장
     const attendance = new Attendance({
       studentId,
-      timestamp,
+      timestamp: new Date(parseInt(timestamp)),
       status,
       lateMinutes,
     });
 
     await attendance.save();
 
-    res.status(201).json({
-      message: `출석이 기록되었습니다. 상태: ${status}, 지각 시간: ${lateMinutes}분`,
-      attendance,
-    });
+    let message;
+    if (status === "present") {
+      message = "출석 처리되었습니다.";
+    } else if (status === "late") {
+      message = `지각 처리되었습니다. 지각 시간: ${lateMinutes}분`;
+    } else {
+      message = "결석 처리되었습니다.";
+    }
+
+    res.status(201).json({ message, attendance });
   } catch (error) {
-    console.error("출석 기록 중 오류 발생:", error);
+    console.error("출석 처리 중 오류 발생:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
