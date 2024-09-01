@@ -282,6 +282,17 @@ app.post("/api/change-password", verifyToken, async (req, res) => {
   }
 });
 
+app.get("/api/student-info", verifyToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("-password");
+    res.json({ success: true, studentId: user.studentId, name: user.name });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, message: "서버 오류가 발생했습니다." });
+  }
+});
+
 // Admin routes
 app.get("/api/admin/pending-users", verifyToken, isAdmin, async (req, res) => {
   try {
