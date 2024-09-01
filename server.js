@@ -63,7 +63,7 @@ const DailyAttendanceSummary = mongoose.model(
 const ATTENDANCE_HOUR = 24;
 const ATTENDANCE_MINUTE = 3;
 const LATE_HOUR = 24;
-const LATE_MINUTE = 25;
+const LATE_MINUTE = 27;
 
 // Helper functions 추가
 function getKoreanTime(date = new Date()) {
