@@ -413,17 +413,21 @@ const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
 // 출석 상태 결정 함수 수정
 function determineAttendanceStatus(timestamp) {
-  const koreanTime = moment.tz(timestamp, "Asia/Seoul");
-  const currentDate = koreanTime.startOf("day");
+  const koreanTime = moment.tz(timestamp, "YYYY-MM-DD HH:mm:ss", "Asia/Seoul");
+  const currentDate = koreanTime.clone().startOf("day");
 
-  const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
+  const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:00";
   const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:00";
 
   const [normalHour, normalMinute] = normalAttendanceTime.split(":").map(Number);
   const [lateHour, lateMinute] = lateAttendanceTime.split(":").map(Number);
 
-  const normalTime = moment(currentDate).add(normalHour, "hours").add(normalMinute, "minutes");
-  const lateTime = moment(currentDate).add(lateHour, "hours").add(lateMinute, "minutes");
+  const normalTime = currentDate.clone().add(normalHour, "hours").add(normalMinute, "minutes");
+  const lateTime = currentDate.clone().add(lateHour, "hours").add(lateMinute, "minutes");
+
+  console.log(`Current time: ${koreanTime.format("YYYY-MM-DD HH:mm:ss")}`);
+  console.log(`Normal attendance time: ${normalTime.format("YYYY-MM-DD HH:mm:ss")}`);
+  console.log(`Late attendance time: ${lateTime.format("YYYY-MM-DD HH:mm:ss")}`);
 
   if (koreanTime.isSameOrBefore(normalTime)) {
     return { status: "present", lateMinutes: 0 };
@@ -460,8 +464,8 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     console.log(`Determined status: ${status}, Late minutes: ${lateMinutes}`);
 
     // Check for existing attendance on the same day
-    const today = moment(timestamp).tz("Asia/Seoul").startOf("day").format("YYYY-MM-DD");
-    const tomorrow = moment(timestamp).tz("Asia/Seoul").add(1, "days").startOf("day").format("YYYY-MM-DD");
+    const today = moment.tz(timestamp, "Asia/Seoul").startOf("day").format("YYYY-MM-DD");
+    const tomorrow = moment.tz(timestamp, "Asia/Seoul").add(1, "days").startOf("day").format("YYYY-MM-DD");
 
     const existingAttendance = await Attendance.findOne({
       studentId,
