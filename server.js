@@ -463,6 +463,24 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     const [studentId, timestampStr] = decrypted.toString().split("|");
     const timestamp = toKoreanTime(timestampStr).toDate();
 
+    // Check for existing attendance on the same day
+    const today = moment(timestamp).tz("Asia/Seoul").startOf("day");
+    const tomorrow = moment(today).add(1, "days");
+
+    const existingAttendance = await Attendance.findOne({
+      studentId,
+      timestamp: {
+        $gte: today.toDate(),
+        $lt: tomorrow.toDate(),
+      },
+    });
+
+    if (existingAttendance) {
+      return res
+        .status(400)
+        .json({ message: "이미 오늘 출석이 기록되었습니다." });
+    }
+
     // 출석 상태 결정
     const { status, lateMinutes } = determineAttendanceStatus(timestamp);
 
