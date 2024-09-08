@@ -429,10 +429,6 @@ function determineAttendanceStatus(timestamp) {
   const normalTime = moment(currentDate).add(normalHour, "hours").add(normalMinute, "minutes");
   const lateTime = moment(currentDate).add(lateHour, "hours").add(lateMinute, "minutes");
 
-  console.log(`Current time: ${koreanTime.format("YYYY-MM-DD HH:mm:ss")}`);
-  console.log(`Normal time: ${normalTime.format("YYYY-MM-DD HH:mm:ss")}`);
-  console.log(`Late time: ${lateTime.format("YYYY-MM-DD HH:mm:ss")}`);
-
   if (koreanTime.isSameOrBefore(normalTime)) {
     return { status: "present", lateMinutes: 0 };
   } else if (koreanTime.isBefore(lateTime)) {
@@ -518,12 +514,12 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
   try {
     const { startDate, endDate, grade, classNum } = req.query;
 
-    // 쿼리 조건 설정
+    // 쿼리 조건 설정 (한국 시간 기준)
     let matchCondition = {};
     if (startDate && endDate) {
       matchCondition.timestamp = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
+        $gte: moment.tz(startDate, "Asia/Seoul").startOf('day').toDate(),
+        $lte: moment.tz(endDate, "Asia/Seoul").endOf('day').toDate(),
       };
     }
 
@@ -560,7 +556,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
         );
         const lastAttendance =
           attendances.length > 0
-            ? moment(attendances[attendances.length - 1].timestamp).format(
+            ? toKoreanTime(attendances[attendances.length - 1].timestamp).format(
                 "YYYY-MM-DD HH:mm:ss"
               )
             : "N/A";
@@ -587,7 +583,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
           absentCount,
           totalLateMinutes,
           lastAttendance,
-          todayStatus, // 오늘의 출석 상태 추가
+          todayStatus,
         };
       })
     );
