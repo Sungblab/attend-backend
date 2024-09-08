@@ -361,7 +361,7 @@ app.post("/api/admin/set-reader", verifyToken, isAdmin, async (req, res) => {
 app.post("/api/generate-qr", verifyToken, async (req, res) => {
   try {
     const { studentId } = req.body;
-    const timestamp = new Date().toISOString(); // 현재 시간 사용
+    const timestamp = toKoreanTimeString(new Date()); // 현재 시간을 한국 시간 문자열로 변환
 
     const qrData = `${studentId}|${timestamp}`;
 
@@ -450,8 +450,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     );
     let decrypted = decipher.update(encrypted);
     decrypted = Buffer.concat([decrypted, decipher.final()]);
-    const [studentId, timestampStr] = decrypted.toString().split("|");
-    const timestamp = toKoreanTimeString(new Date(timestampStr));
+    const [studentId, timestamp] = decrypted.toString().split("|");
 
     console.log(`Decrypted timestamp: ${timestamp}`);
 
@@ -461,8 +460,8 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     console.log(`Determined status: ${status}, Late minutes: ${lateMinutes}`);
 
     // Check for existing attendance on the same day
-    const today = moment.tz(timestamp, "Asia/Seoul").startOf("day").format("YYYY-MM-DD");
-    const tomorrow = moment.tz(timestamp, "Asia/Seoul").add(1, "days").startOf("day").format("YYYY-MM-DD");
+    const today = moment(timestamp).tz("Asia/Seoul").startOf("day").format("YYYY-MM-DD");
+    const tomorrow = moment(timestamp).tz("Asia/Seoul").add(1, "days").startOf("day").format("YYYY-MM-DD");
 
     const existingAttendance = await Attendance.findOne({
       studentId,
