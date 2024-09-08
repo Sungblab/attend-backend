@@ -394,26 +394,32 @@ app.post("/api/generate-qr", verifyToken, async (req, res) => {
   }
 });
 
-// Attendance model
-const AttendanceSchema = new mongoose.Schema({
-  studentId: { type: String, required: true },
-  timestamp: { type: Date, required: true },
-  status: { type: String, enum: ["present", "late", "absent"], required: true },
-  lateMinutes: { type: Number, default: 0 },
-});
-
-const Attendance = mongoose.model("Attendance", AttendanceSchema);
-
 // 한국 시간으로 변환하는 함수
 function toKoreanTime(date) {
   return moment(date).tz("Asia/Seoul");
 }
 
-// 출석 상태 결정 함수
-function determineAttendanceStatus(timestamp) {
-  const koreanTime = toKoreanTime(timestamp);
+// Attendance model
+const AttendanceSchema = new mongoose.Schema({
+  studentId: { type: String, required: true },
+  timestamp: {
+    type: Date,
+    required: true,
+    get: (v) => moment(v).tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss"),
+    set: (v) => moment.tz(v, "Asia/Seoul").utc().toDate(),
+  },
+  status: { type: String, enum: ["present", "late", "absent"], required: true },
+  lateMinutes: { type: Number, default: 0 },
+});
 
-  // 환경변수에서 시간 설정을 가져옵니다. 설정되지 않았을 경우 기본값을 사용합니다.
+AttendanceSchema.set("toJSON", { getters: true });
+const Attendance = mongoose.model("Attendance", AttendanceSchema);
+
+// 출석 상태 결정 함수 수정
+function determineAttendanceStatus(timestamp) {
+  const koreanTime = moment(timestamp).tz("Asia/Seoul");
+  const currentDate = koreanTime.startOf("day");
+
   const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
   const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:00";
 
@@ -422,11 +428,10 @@ function determineAttendanceStatus(timestamp) {
     .map(Number);
   const [lateHour, lateMinute] = lateAttendanceTime.split(":").map(Number);
 
-  const currentDate = moment1(koreanTime).startOf("day");
-  const normalTime = moment1(currentDate)
+  const normalTime = moment(currentDate)
     .add(normalHour, "hours")
     .add(normalMinute, "minutes");
-  const lateTime = moment1(currentDate)
+  const lateTime = moment(currentDate)
     .add(lateHour, "hours")
     .add(lateMinute, "minutes");
 
@@ -455,7 +460,8 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     );
     let decrypted = decipher.update(encrypted);
     decrypted = Buffer.concat([decrypted, decipher.final()]);
-    const [studentId, timestamp] = decrypted.toString().split("|");
+    const [studentId, timestampStr] = decrypted.toString().split("|");
+    const timestamp = moment.tz(timestampStr, "Asia/Seoul").toDate();
 
     // 출석 상태 결정
     const { status, lateMinutes } = determineAttendanceStatus(timestamp);
