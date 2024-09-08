@@ -417,7 +417,7 @@ const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
 // 출석 상태 결정 함수 수정
 function determineAttendanceStatus(timestamp) {
-  const koreanTime = moment(timestamp).tz("Asia/Seoul");
+  const koreanTime = toKoreanTime(timestamp);
   const currentDate = koreanTime.startOf("day");
 
   const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
@@ -461,7 +461,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     let decrypted = decipher.update(encrypted);
     decrypted = Buffer.concat([decrypted, decipher.final()]);
     const [studentId, timestampStr] = decrypted.toString().split("|");
-    const timestamp = moment.tz(timestampStr, "Asia/Seoul").toDate();
+    const timestamp = toKoreanTime(timestampStr).toDate();
 
     // 출석 상태 결정
     const { status, lateMinutes } = determineAttendanceStatus(timestamp);
@@ -469,7 +469,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     // 출석 기록 생성 및 저장
     const attendance = new Attendance({
       studentId,
-      timestamp: toKoreanTime(timestamp).toDate(),
+      timestamp: timestamp,
       status,
       lateMinutes,
     });
@@ -496,12 +496,12 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
   try {
     const { startDate, endDate, grade, classNum } = req.query;
 
-    // 쿼리 조건 설정
+    // 쿼리 조건 설정 (한국 시간 기준)
     let matchCondition = {};
     if (startDate && endDate) {
       matchCondition.timestamp = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
+        $gte: toKoreanTime(startDate).startOf("day").toDate(),
+        $lte: toKoreanTime(endDate).endOf("day").toDate(),
       };
     }
 
@@ -515,7 +515,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       "studentId name grade class number"
     );
 
-    const today = moment().tz("Asia/Seoul").startOf("day");
+    const today = toKoreanTime(new Date()).startOf("day");
 
     // 각 학생별 통계 계산
     const studentStats = await Promise.all(
@@ -538,9 +538,9 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
         );
         const lastAttendance =
           attendances.length > 0
-            ? moment(attendances[attendances.length - 1].timestamp).format(
-                "YYYY-MM-DD HH:mm:ss"
-              )
+            ? toKoreanTime(
+                attendances[attendances.length - 1].timestamp
+              ).format("YYYY-MM-DD HH:mm:ss")
             : "N/A";
 
         // 오늘의 출석 상태 확인
@@ -565,7 +565,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
           absentCount,
           totalLateMinutes,
           lastAttendance,
-          todayStatus, // 오늘의 출석 상태 추가
+          todayStatus,
         };
       })
     );
