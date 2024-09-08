@@ -405,7 +405,7 @@ const AttendanceSchema = new mongoose.Schema({
   timestamp: {
     type: Date,
     required: true,
-    get: (v) => moment(v).tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss"),
+    get: (v) => toKoreanTime(v).format("YYYY-MM-DD HH:mm:ss"),
     set: (v) => moment.tz(v, "Asia/Seoul").utc().toDate(),
   },
   status: { type: String, enum: ["present", "late", "absent"], required: true },
@@ -423,19 +423,17 @@ function determineAttendanceStatus(timestamp) {
   const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
   const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:00";
 
-  const [normalHour, normalMinute] = normalAttendanceTime
-    .split(":")
-    .map(Number);
+  const [normalHour, normalMinute] = normalAttendanceTime.split(":").map(Number);
   const [lateHour, lateMinute] = lateAttendanceTime.split(":").map(Number);
 
-  const normalTime = moment(currentDate)
-    .add(normalHour, "hours")
-    .add(normalMinute, "minutes");
-  const lateTime = moment(currentDate)
-    .add(lateHour, "hours")
-    .add(lateMinute, "minutes");
+  const normalTime = moment(currentDate).add(normalHour, "hours").add(normalMinute, "minutes");
+  const lateTime = moment(currentDate).add(lateHour, "hours").add(lateMinute, "minutes");
 
-  if (koreanTime.isBefore(normalTime)) {
+  console.log(`Current time: ${koreanTime.format("YYYY-MM-DD HH:mm:ss")}`);
+  console.log(`Normal time: ${normalTime.format("YYYY-MM-DD HH:mm:ss")}`);
+  console.log(`Late time: ${lateTime.format("YYYY-MM-DD HH:mm:ss")}`);
+
+  if (koreanTime.isSameOrBefore(normalTime)) {
     return { status: "present", lateMinutes: 0 };
   } else if (koreanTime.isBefore(lateTime)) {
     const lateMinutes = koreanTime.diff(normalTime, "minutes");
@@ -461,10 +459,17 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     let decrypted = decipher.update(encrypted);
     decrypted = Buffer.concat([decrypted, decipher.final()]);
     const [studentId, timestampStr] = decrypted.toString().split("|");
-    const timestamp = toKoreanTime(timestampStr).toDate();
+    const timestamp = new Date(timestampStr);
+
+    console.log(`Decrypted timestamp: ${timestamp}`);
+
+    // 출석 상태 결정
+    const { status, lateMinutes } = determineAttendanceStatus(timestamp);
+
+    console.log(`Determined status: ${status}, Late minutes: ${lateMinutes}`);
 
     // Check for existing attendance on the same day
-    const today = moment(timestamp).tz("Asia/Seoul").startOf("day");
+    const today = toKoreanTime(timestamp).startOf("day");
     const tomorrow = moment(today).add(1, "days");
 
     const existingAttendance = await Attendance.findOne({
@@ -481,9 +486,6 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
         .json({ message: "이미 오늘 출석이 기록되었습니다." });
     }
 
-    // 출석 상태 결정
-    const { status, lateMinutes } = determineAttendanceStatus(timestamp);
-
     // 출석 기록 생성 및 저장
     const attendance = new Attendance({
       studentId,
@@ -493,6 +495,8 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     });
 
     await attendance.save();
+
+    console.log(`Saved attendance: ${JSON.stringify(attendance)}`);
 
     let message;
     if (status === "present") {
