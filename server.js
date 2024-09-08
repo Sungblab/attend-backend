@@ -4,9 +4,9 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const crypto = require("crypto");
-const cron = require("node-cron");
-const ExcelJS = require("exceljs");
 const moment = require("moment-timezone");
+const moment1 = require("moment");
+require("dotenv").config();
 
 const app = express();
 
@@ -35,64 +35,6 @@ const UserSchema = new mongoose.Schema({
 });
 
 const User = mongoose.model("User", UserSchema);
-
-// Attendance model
-const AttendanceSchema = new mongoose.Schema({
-  studentId: { type: String, required: true },
-  timestamp: { type: Date, required: true },
-  status: { type: String, enum: ["present", "late", "absent"], required: true },
-  lateMinutes: { type: Number, default: 0 },
-});
-
-const Attendance = mongoose.model("Attendance", AttendanceSchema);
-
-const DailyAttendanceSummarySchema = new mongoose.Schema({
-  date: { type: Date, required: true, unique: true },
-  totalStudents: { type: Number, required: true },
-  presentCount: { type: Number, default: 0 },
-  lateCount: { type: Number, default: 0 },
-  absentCount: { type: Number, default: 0 },
-  totalLateMinutes: { type: Number, default: 0 },
-});
-
-const DailyAttendanceSummary = mongoose.model(
-  "DailyAttendanceSummary",
-  DailyAttendanceSummarySchema
-);
-
-const ATTENDANCE_HOUR = 24;
-const ATTENDANCE_MINUTE = 3;
-const LATE_HOUR = 24;
-const LATE_MINUTE = 35;
-
-// Helper functions 추가
-function getKoreanTime(date = new Date()) {
-  return moment(date).tz("Asia/Seoul");
-}
-
-function determineAttendanceStatus(timestamp) {
-  const koreanTime = getKoreanTime(timestamp);
-  const attendanceTime = koreanTime.clone().set({
-    hour: ATTENDANCE_HOUR,
-    minute: ATTENDANCE_MINUTE,
-    second: 0,
-    millisecond: 0,
-  });
-  const lateTime = koreanTime
-    .clone()
-    .set({ hour: LATE_HOUR, minute: LATE_MINUTE, second: 0, millisecond: 0 });
-
-  if (koreanTime.isBefore(attendanceTime)) {
-    return { status: "present", lateMinutes: 0 };
-  } else if (koreanTime.isBefore(lateTime)) {
-    return {
-      status: "late",
-      lateMinutes: koreanTime.diff(attendanceTime, "minutes"),
-    };
-  } else {
-    return { status: "absent", lateMinutes: 0 };
-  }
-}
 
 // Middleware to verify JWT token
 const verifyToken = (req, res, next) => {
@@ -336,221 +278,6 @@ app.post("/api/admin/set-admin", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-app.post("/api/admin/set-reader", verifyToken, isAdmin, async (req, res) => {
-  try {
-    const { userId, isReader } = req.body;
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
-    }
-    user.isReader = isReader;
-    await user.save();
-    res.json({ message: "사용자의 리더 권한이 변경되었습니다." });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
-  }
-});
-
-// ATTENDANCE_HOUR와 ATTENDANCE_MINUTE 변수 확인
-console.log(
-  `출석 기준 시간: ${ATTENDANCE_HOUR}시 ${ATTENDANCE_MINUTE}분 (KST)`
-);
-
-// 대시보드 API 엔드포인트 수정
-app.get("/api/dashboard", verifyToken, isAdmin, async (req, res) => {
-  try {
-    const { startDate, endDate, grade, class: classNumber } = req.query;
-
-    if (!startDate || !endDate) {
-      return res
-        .status(400)
-        .json({ message: "시작 날짜와 종료 날짜는 필수 입력 항목입니다." });
-    }
-
-    const start = getKoreanTime(startDate).startOf("day").toDate();
-    const end = getKoreanTime(endDate).endOf("day").toDate();
-
-    // 사용자 쿼리 구성
-    const userQuery = { isApproved: true };
-    if (grade) userQuery.grade = Number(grade);
-    if (classNumber) userQuery.class = Number(classNumber);
-
-    // 학생 조회
-    const students = await User.find(userQuery).lean();
-
-    // 출석 기록 조회
-    const attendanceRecords = await Attendance.find({
-      studentId: { $in: students.map((s) => s.studentId) },
-      timestamp: { $gte: start, $lte: end },
-    }).lean();
-
-    // 일일 출석 요약 조회
-    const dailySummaries = await DailyAttendanceSummary.find({
-      date: { $gte: start, $lte: end },
-    }).lean();
-
-    // 학생별 출석 통계 계산
-    const studentStats = students.map((student) => {
-      const studentRecords = attendanceRecords.filter(
-        (r) => r.studentId === student.studentId
-      );
-      const presentCount = studentRecords.filter(
-        (r) => r.status === "present"
-      ).length;
-      const lateCount = studentRecords.filter(
-        (r) => r.status === "late"
-      ).length;
-      const totalLateMinutes = studentRecords.reduce(
-        (sum, r) => sum + (r.lateMinutes || 0),
-        0
-      );
-
-      return {
-        studentId: student.studentId,
-        name: student.name,
-        grade: student.grade,
-        class: student.class,
-        number: student.number,
-        presentCount,
-        lateCount,
-        absentCount: dailySummaries.length - presentCount - lateCount,
-        totalLateMinutes,
-        attendanceRate: (
-          ((presentCount + lateCount) / dailySummaries.length) *
-          100
-        ).toFixed(2),
-        lateRate: ((lateCount / (presentCount + lateCount)) * 100).toFixed(2),
-      };
-    });
-
-    // 전체 통계 계산
-    const overallStats = {
-      totalStudents: students.length,
-      totalDays: dailySummaries.length,
-      totalPresent: dailySummaries.reduce(
-        (sum, day) => sum + day.presentCount,
-        0
-      ),
-      totalLate: dailySummaries.reduce((sum, day) => sum + day.lateCount, 0),
-      totalAbsent: dailySummaries.reduce(
-        (sum, day) => sum + day.absentCount,
-        0
-      ),
-      totalLateMinutes: dailySummaries.reduce(
-        (sum, day) => sum + day.totalLateMinutes,
-        0
-      ),
-      averageAttendanceRate: (
-        studentStats.reduce((sum, s) => sum + parseFloat(s.attendanceRate), 0) /
-        students.length
-      ).toFixed(2),
-      averageLateRate: (
-        studentStats.reduce((sum, s) => sum + parseFloat(s.lateRate), 0) /
-        students.length
-      ).toFixed(2),
-    };
-
-    res.json({
-      period: { startDate: start, endDate: end },
-      overallStats,
-      studentStats,
-    });
-  } catch (error) {
-    console.error("대시보드 데이터 조회 중 오류 발생:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
-  }
-});
-
-app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
-  try {
-    const { encryptedData } = req.body;
-
-    // 암호화된 데이터 복호화
-    const [ivHex, encryptedHex] = encryptedData.split(":");
-    const iv = Buffer.from(ivHex, "hex");
-    const encrypted = Buffer.from(encryptedHex, "hex");
-    const decipher = crypto.createDecipheriv(
-      "aes-256-cbc",
-      Buffer.from(process.env.ENCRYPTION_KEY),
-      iv
-    );
-    let decrypted = decipher.update(encrypted);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-    const [studentId, timestamp] = decrypted.toString().split("|");
-
-    // 출석 상태 결정
-    const { status, lateMinutes } = determineAttendanceStatus(
-      new Date(parseInt(timestamp))
-    );
-
-    // 출석 기록 생성 및 저장
-    const attendance = new Attendance({
-      studentId,
-      timestamp: new Date(parseInt(timestamp)),
-      status,
-      lateMinutes,
-    });
-
-    await attendance.save();
-
-    let message;
-    if (status === "present") {
-      message = "출석 처리되었습니다.";
-    } else if (status === "late") {
-      message = `지각 처리되었습니다. 지각 시간: ${lateMinutes}분`;
-    } else {
-      message = "결석 처리되었습니다.";
-    }
-
-    res.status(201).json({ message, attendance });
-  } catch (error) {
-    console.error("출석 처리 중 오류 발생:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
-  }
-});
-
-// Generate QR code data route
-app.post("/api/generate-qr", verifyToken, async (req, res) => {
-  try {
-    const { studentId, timestamp } = req.body;
-    const user = await User.findOne({ studentId });
-    if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "사용자를 찾을 수 없습니다." });
-    }
-
-    const qrData = `${studentId}|${timestamp}`;
-
-    if (
-      !process.env.ENCRYPTION_KEY ||
-      process.env.ENCRYPTION_KEY.length !== 32
-    ) {
-      throw new Error("유효하지 않은 암호화 키");
-    }
-
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv(
-      "aes-256-cbc",
-      Buffer.from(process.env.ENCRYPTION_KEY),
-      iv
-    );
-    let encryptedData = cipher.update(qrData, "utf8", "hex");
-    encryptedData += cipher.final("hex");
-
-    const result = iv.toString("hex") + ":" + encryptedData;
-
-    res.json({ success: true, encryptedData: result });
-  } catch (error) {
-    console.error("QR 코드 생성 오류:", error);
-    res.status(500).json({
-      success: false,
-      message: "서버 오류가 발생했습니다: " + error.message,
-    });
-  }
-});
-
 // Logout route
 app.post("/api/logout", verifyToken, (req, res) => {
   res.json({ success: true, message: "로그아웃되었습니다." });
@@ -590,64 +317,6 @@ app.delete(
   }
 );
 
-// 새로운 AttendanceHistory 모델 정의
-const AttendanceHistorySchema = new mongoose.Schema({
-  date: { type: Date, required: true },
-  records: [
-    {
-      studentId: { type: String, required: true },
-      isLate: { type: Boolean, default: false },
-      lateMinutes: { type: Number, default: 0 },
-    },
-  ],
-});
-
-const AttendanceHistory = mongoose.model(
-  "AttendanceHistory",
-  AttendanceHistorySchema
-);
-
-// 일일 출석 초기화를 위한 cron job
-cron.schedule("0 0 * * *", async () => {
-  try {
-    const yesterday = getKoreanTime()
-      .subtract(1, "day")
-      .startOf("day")
-      .toDate();
-    const today = getKoreanTime().startOf("day").toDate();
-
-    const totalStudents = await User.countDocuments({ isApproved: true });
-    const yesterdayAttendance = await Attendance.find({
-      timestamp: { $gte: yesterday, $lt: today },
-    });
-
-    const presentCount = yesterdayAttendance.filter(
-      (a) => a.status === "present"
-    ).length;
-    const lateCount = yesterdayAttendance.filter(
-      (a) => a.status === "late"
-    ).length;
-    const absentCount = totalStudents - presentCount - lateCount;
-    const totalLateMinutes = yesterdayAttendance.reduce(
-      (sum, a) => sum + (a.lateMinutes || 0),
-      0
-    );
-
-    await DailyAttendanceSummary.create({
-      date: yesterday,
-      totalStudents,
-      presentCount,
-      lateCount,
-      absentCount,
-      totalLateMinutes,
-    });
-
-    console.log("일일 출석 요약이 생성되었습니다:", yesterday);
-  } catch (error) {
-    console.error("일일 출석 요약 생성 중 오류 발생:", error);
-  }
-});
-
 app.post(
   "/api/admin/reset-password",
   verifyToken,
@@ -673,101 +342,242 @@ app.post(
   }
 );
 
-// 엑셀 다운로드 라우트 수정
-app.get("/api/download-excel", verifyToken, isAdmin, async (req, res) => {
+app.post("/api/admin/set-reader", verifyToken, isAdmin, async (req, res) => {
   try {
-    const { startDate, endDate, grade, class: classNumber } = req.query;
+    const { userId, isReader } = req.body;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
+    }
+    user.isReader = isReader;
+    await user.save();
+    res.json({ message: "사용자의 리더 권한이 변경되었습니다." });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+});
 
-    if (!startDate || !endDate) {
-      return res
-        .status(400)
-        .json({ message: "시작 날짜와 종료 날짜는 필수 입력 항목입니다." });
+// Generate QR code data route
+app.post("/api/generate-qr", verifyToken, async (req, res) => {
+  try {
+    const { studentId } = req.body;
+    const timestamp = new Date().toISOString(); // 현재 시간 사용
+
+    const qrData = `${studentId}|${timestamp}`;
+
+    if (
+      !process.env.ENCRYPTION_KEY ||
+      process.env.ENCRYPTION_KEY.length !== 32
+    ) {
+      throw new Error("유효하지 않은 암호화 키");
     }
 
-    const start = getKoreanTime(startDate).startOf("day").toDate();
-    const end = getKoreanTime(endDate).endOf("day").toDate();
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv(
+      "aes-256-cbc",
+      Buffer.from(process.env.ENCRYPTION_KEY),
+      iv
+    );
+    let encryptedData = cipher.update(qrData, "utf8", "hex");
+    encryptedData += cipher.final("hex");
 
-    const userQuery = { isApproved: true };
-    if (grade) userQuery.grade = Number(grade);
-    if (classNumber) userQuery.class = Number(classNumber);
+    const result = iv.toString("hex") + ":" + encryptedData;
 
-    const students = await User.find(userQuery).lean();
-    const attendanceRecords = await Attendance.find({
-      studentId: { $in: students.map((s) => s.studentId) },
-      timestamp: { $gte: start, $lte: end },
-    }).lean();
+    res.json({ success: true, encryptedData: result });
+  } catch (error) {
+    console.error("QR 코드 생성 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "서버 오류가 발생했습니다: " + error.message,
+    });
+  }
+});
 
-    const dailySummaries = await DailyAttendanceSummary.find({
-      date: { $gte: start, $lte: end },
-    }).lean();
+// Attendance model
+const AttendanceSchema = new mongoose.Schema({
+  studentId: { type: String, required: true },
+  timestamp: { type: Date, required: true },
+  status: { type: String, enum: ["present", "late", "absent"], required: true },
+  lateMinutes: { type: Number, default: 0 },
+});
 
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet("출석 데이터");
+const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
-    worksheet.columns = [
-      { header: "학번", key: "studentId", width: 15 },
-      { header: "이름", key: "name", width: 15 },
-      { header: "학년", key: "grade", width: 10 },
-      { header: "반", key: "class", width: 10 },
-      { header: "번호", key: "number", width: 10 },
-      { header: "출석 횟수", key: "presentCount", width: 15 },
-      { header: "지각 횟수", key: "lateCount", width: 15 },
-      { header: "결석 횟수", key: "absentCount", width: 15 },
-      { header: "총 지각 시간(분)", key: "totalLateMinutes", width: 20 },
-      { header: "출석률(%)", key: "attendanceRate", width: 15 },
-      { header: "지각률(%)", key: "lateRate", width: 15 },
-    ];
+// 한국 시간으로 변환하는 함수
+function toKoreanTime(date) {
+  return moment(date).tz("Asia/Seoul");
+}
 
-    students.forEach((student) => {
-      const studentRecords = attendanceRecords.filter(
-        (r) => r.studentId === student.studentId
-      );
-      const presentCount = studentRecords.filter(
-        (r) => r.status === "present"
-      ).length;
-      const lateCount = studentRecords.filter(
-        (r) => r.status === "late"
-      ).length;
-      const absentCount = dailySummaries.length - presentCount - lateCount;
-      const totalLateMinutes = studentRecords.reduce(
-        (sum, r) => sum + (r.lateMinutes || 0),
-        0
-      );
+// 출석 상태 결정 함수
+function determineAttendanceStatus(timestamp) {
+  const koreanTime = toKoreanTime(timestamp);
 
-      worksheet.addRow({
-        studentId: student.studentId,
-        name: student.name,
-        grade: student.grade,
-        class: student.class,
-        number: student.number,
-        presentCount,
-        lateCount,
-        absentCount,
-        totalLateMinutes,
-        attendanceRate: (
-          ((presentCount + lateCount) / dailySummaries.length) *
-          100
-        ).toFixed(2),
-        lateRate: ((lateCount / (presentCount + lateCount)) * 100).toFixed(2),
-      });
+  // 환경변수에서 시간 설정을 가져옵니다. 설정되지 않았을 경우 기본값을 사용합니다.
+  const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
+  const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:30";
+
+  const [normalHour, normalMinute] = normalAttendanceTime
+    .split(":")
+    .map(Number);
+  const [lateHour, lateMinute] = lateAttendanceTime.split(":").map(Number);
+
+  const currentDate = moment1(koreanTime).startOf("day");
+  const normalTime = moment1(currentDate)
+    .add(normalHour, "hours")
+    .add(normalMinute, "minutes");
+  const lateTime = moment1(currentDate)
+    .add(lateHour, "hours")
+    .add(lateMinute, "minutes");
+
+  if (koreanTime.isBefore(normalTime)) {
+    return { status: "present", lateMinutes: 0 };
+  } else if (koreanTime.isBefore(lateTime)) {
+    const lateMinutes = koreanTime.diff(normalTime, "minutes");
+    return { status: "late", lateMinutes };
+  } else {
+    return { status: "absent", lateMinutes: 0 };
+  }
+}
+
+app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
+  try {
+    const { encryptedData } = req.body;
+
+    // 암호화된 데이터 복호화
+    const [ivHex, encryptedHex] = encryptedData.split(":");
+    const iv = Buffer.from(ivHex, "hex");
+    const encrypted = Buffer.from(encryptedHex, "hex");
+    const decipher = crypto.createDecipheriv(
+      "aes-256-cbc",
+      Buffer.from(process.env.ENCRYPTION_KEY),
+      iv
+    );
+    let decrypted = decipher.update(encrypted);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    const [studentId, timestamp] = decrypted.toString().split("|");
+
+    // 출석 상태 결정
+    const { status, lateMinutes } = determineAttendanceStatus(timestamp);
+
+    // 출석 기록 생성 및 저장
+    const attendance = new Attendance({
+      studentId,
+      timestamp: toKoreanTime(timestamp).toDate(),
+      status,
+      lateMinutes,
     });
 
-    const fileName = `attendance_data_${moment(start).format(
-      "YYYYMMDD"
-    )}_${moment(end).format("YYYYMMDD")}.xlsx`;
+    await attendance.save();
 
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader("Content-Disposition", `attachment; filename=${fileName}`);
+    let message;
+    if (status === "present") {
+      message = "출석 처리되었습니다.";
+    } else if (status === "late") {
+      message = `지각 처리되었습니다. 지각 시간: ${lateMinutes}분`;
+    } else {
+      message = "결석 처리되었습니다.";
+    }
 
-    await workbook.xlsx.write(res);
-    res.end();
-
-    console.log("Excel file generated and sent successfully");
+    res.status(201).json({ message, attendance });
   } catch (error) {
-    console.error("엑셀 파일 생성 중 오류 발생:", error);
+    console.error("출석 처리 중 오류 발생:", error);
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+});
+
+app.get("/api/attendance/stats", verifyToken, async (req, res) => {
+  try {
+    const { startDate, endDate, grade, classNum } = req.query;
+
+    // 쿼리 조건 설정
+    let matchCondition = {};
+    if (startDate && endDate) {
+      matchCondition.timestamp = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate),
+      };
+    }
+
+    // 학생 필터링 조건
+    let userMatchCondition = {};
+    if (grade) userMatchCondition.grade = parseInt(grade);
+    if (classNum) userMatchCondition.class = parseInt(classNum);
+
+    // 학생 목록 가져오기
+    const students = await User.find(userMatchCondition).select(
+      "studentId name grade class number"
+    );
+
+    const today = moment().tz("Asia/Seoul").startOf("day");
+
+    // 각 학생별 통계 계산
+    const studentStats = await Promise.all(
+      students.map(async (student) => {
+        const attendances = await Attendance.find({
+          ...matchCondition,
+          studentId: student.studentId,
+        });
+
+        const presentCount = attendances.filter(
+          (a) => a.status === "present"
+        ).length;
+        const lateCount = attendances.filter((a) => a.status === "late").length;
+        const absentCount = attendances.filter(
+          (a) => a.status === "absent"
+        ).length;
+        const totalLateMinutes = attendances.reduce(
+          (sum, a) => sum + a.lateMinutes,
+          0
+        );
+        const lastAttendance =
+          attendances.length > 0
+            ? moment(attendances[attendances.length - 1].timestamp).format(
+                "YYYY-MM-DD HH:mm:ss"
+              )
+            : "N/A";
+
+        // 오늘의 출석 상태 확인
+        const todayAttendance = await Attendance.findOne({
+          studentId: student.studentId,
+          timestamp: {
+            $gte: today.toDate(),
+            $lt: moment(today).add(1, "days").toDate(),
+          },
+        });
+
+        const todayStatus = todayAttendance ? todayAttendance.status : "미출석";
+
+        return {
+          studentId: student.studentId,
+          name: student.name,
+          grade: student.grade,
+          class: student.class,
+          number: student.number,
+          presentCount,
+          lateCount,
+          absentCount,
+          totalLateMinutes,
+          lastAttendance,
+          todayStatus, // 오늘의 출석 상태 추가
+        };
+      })
+    );
+
+    // 전체 통계 계산
+    const overallStats = {
+      totalStudents: studentStats.length,
+      totalPresent: studentStats.reduce((sum, s) => sum + s.presentCount, 0),
+      totalLate: studentStats.reduce((sum, s) => sum + s.lateCount, 0),
+      totalAbsent: studentStats.reduce((sum, s) => sum + s.absentCount, 0),
+      averageLateMinutes:
+        studentStats.reduce((sum, s) => sum + s.totalLateMinutes, 0) /
+        studentStats.length,
+    };
+
+    res.json({ studentStats, overallStats });
+  } catch (error) {
+    console.error("통계 조회 중 오류 발생:", error);
     res
       .status(500)
       .json({ message: "서버 오류가 발생했습니다.", error: error.message });
