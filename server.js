@@ -398,14 +398,12 @@ function toKoreanTimeString(date) {
   return moment(date).tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss");
 }
 
-
 // Attendance model
 const AttendanceSchema = new mongoose.Schema({
   studentId: { type: String, required: true },
   timestamp: {
     type: String,
     required: true,
-    set: (v) => toKoreanTimeString(v),
   },
   status: { type: String, enum: ["present", "late", "absent"], required: true },
   lateMinutes: { type: Number, default: 0 },
