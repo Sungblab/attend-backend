@@ -415,7 +415,7 @@ function determineAttendanceStatus(timestamp) {
 
   // 환경변수에서 시간 설정을 가져옵니다. 설정되지 않았을 경우 기본값을 사용합니다.
   const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
-  const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:30";
+  const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:00";
 
   const [normalHour, normalMinute] = normalAttendanceTime
     .split(":")
