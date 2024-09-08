@@ -5,7 +5,6 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const crypto = require("crypto");
 const moment = require("moment-timezone");
-const moment1 = require("moment");
 require("dotenv").config();
 
 const app = express();
@@ -395,29 +394,28 @@ app.post("/api/generate-qr", verifyToken, async (req, res) => {
 });
 
 // 한국 시간으로 변환하는 함수
-function toKoreanTime(date) {
-  return moment(date).tz("Asia/Seoul");
+function toKoreanTimeString(date) {
+  return moment(date).tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss");
 }
+
 
 // Attendance model
 const AttendanceSchema = new mongoose.Schema({
   studentId: { type: String, required: true },
   timestamp: {
-    type: Date,
+    type: String,
     required: true,
-    get: (v) => toKoreanTime(v).format("YYYY-MM-DD HH:mm:ss"),
-    set: (v) => moment.tz(v, "Asia/Seoul").utc().toDate(),
+    set: (v) => toKoreanTimeString(v),
   },
   status: { type: String, enum: ["present", "late", "absent"], required: true },
   lateMinutes: { type: Number, default: 0 },
 });
 
-AttendanceSchema.set("toJSON", { getters: true });
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
 // 출석 상태 결정 함수 수정
 function determineAttendanceStatus(timestamp) {
-  const koreanTime = toKoreanTime(timestamp);
+  const koreanTime = moment.tz(timestamp, "Asia/Seoul");
   const currentDate = koreanTime.startOf("day");
 
   const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
@@ -455,7 +453,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     let decrypted = decipher.update(encrypted);
     decrypted = Buffer.concat([decrypted, decipher.final()]);
     const [studentId, timestampStr] = decrypted.toString().split("|");
-    const timestamp = new Date(timestampStr);
+    const timestamp = toKoreanTimeString(new Date(timestampStr));
 
     console.log(`Decrypted timestamp: ${timestamp}`);
 
@@ -465,14 +463,14 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     console.log(`Determined status: ${status}, Late minutes: ${lateMinutes}`);
 
     // Check for existing attendance on the same day
-    const today = toKoreanTime(timestamp).startOf("day");
-    const tomorrow = moment(today).add(1, "days");
+    const today = moment.tz(timestamp, "Asia/Seoul").startOf("day").format("YYYY-MM-DD");
+    const tomorrow = moment.tz(timestamp, "Asia/Seoul").add(1, "days").startOf("day").format("YYYY-MM-DD");
 
     const existingAttendance = await Attendance.findOne({
       studentId,
       timestamp: {
-        $gte: today.toDate(),
-        $lt: tomorrow.toDate(),
+        $gte: today,
+        $lt: tomorrow,
       },
     });
 
@@ -518,8 +516,8 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
     let matchCondition = {};
     if (startDate && endDate) {
       matchCondition.timestamp = {
-        $gte: moment.tz(startDate, "Asia/Seoul").startOf('day').toDate(),
-        $lte: moment.tz(endDate, "Asia/Seoul").endOf('day').toDate(),
+        $gte: moment.tz(startDate, "Asia/Seoul").startOf('day').format("YYYY-MM-DD HH:mm:ss"),
+        $lte: moment.tz(endDate, "Asia/Seoul").endOf('day').format("YYYY-MM-DD HH:mm:ss"),
       };
     }
 
@@ -533,7 +531,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       "studentId name grade class number"
     );
 
-    const today = moment().tz("Asia/Seoul").startOf("day");
+    const today = moment().tz("Asia/Seoul").startOf("day").format("YYYY-MM-DD");
 
     // 각 학생별 통계 계산
     const studentStats = await Promise.all(
@@ -556,17 +554,15 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
         );
         const lastAttendance =
           attendances.length > 0
-            ? toKoreanTime(attendances[attendances.length - 1].timestamp).format(
-                "YYYY-MM-DD HH:mm:ss"
-              )
+            ? attendances[attendances.length - 1].timestamp
             : "N/A";
 
         // 오늘의 출석 상태 확인
         const todayAttendance = await Attendance.findOne({
           studentId: student.studentId,
           timestamp: {
-            $gte: today.toDate(),
-            $lt: moment(today).add(1, "days").toDate(),
+            $gte: today,
+            $lt: moment.tz(today, "Asia/Seoul").add(1, "days").format("YYYY-MM-DD"),
           },
         });
 
