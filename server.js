@@ -406,6 +406,7 @@ const AttendanceSchema = new mongoose.Schema({
     type: Date,
     required: true,
     get: (v) => moment(v).tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss"),
+    set: (v) => moment.tz(v, "Asia/Seoul").utc().toDate(),
   },
   status: { type: String, enum: ["present", "late", "absent"], required: true },
   lateMinutes: { type: Number, default: 0 },
@@ -495,12 +496,12 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
   try {
     const { startDate, endDate, grade, classNum } = req.query;
 
-    // 쿼리 조건 설정 (한국 시간 기준)
+    // 쿼리 조건 설정
     let matchCondition = {};
     if (startDate && endDate) {
       matchCondition.timestamp = {
-        $gte: toKoreanTime(startDate).startOf("day").toDate(),
-        $lte: toKoreanTime(endDate).endOf("day").toDate(),
+        $gte: new Date(startDate),
+        $lte: new Date(endDate),
       };
     }
 
@@ -514,7 +515,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       "studentId name grade class number"
     );
 
-    const today = toKoreanTime(new Date()).startOf("day");
+    const today = moment().tz("Asia/Seoul").startOf("day");
 
     // 각 학생별 통계 계산
     const studentStats = await Promise.all(
@@ -537,9 +538,9 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
         );
         const lastAttendance =
           attendances.length > 0
-            ? moment(attendances[attendances.length - 1].timestamp)
-                .tz("Asia/Seoul")
-                .format("YYYY-MM-DD HH:mm:ss")
+            ? moment(attendances[attendances.length - 1].timestamp).format(
+                "YYYY-MM-DD HH:mm:ss"
+              )
             : "N/A";
 
         // 오늘의 출석 상태 확인
@@ -564,7 +565,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
           absentCount,
           totalLateMinutes,
           lastAttendance,
-          todayStatus,
+          todayStatus, // 오늘의 출석 상태 추가
         };
       })
     );
