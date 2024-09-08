@@ -406,7 +406,6 @@ const AttendanceSchema = new mongoose.Schema({
     type: Date,
     required: true,
     get: (v) => moment(v).tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss"),
-    set: (v) => moment.tz(v, "Asia/Seoul").utc().toDate(),
   },
   status: { type: String, enum: ["present", "late", "absent"], required: true },
   lateMinutes: { type: Number, default: 0 },
@@ -538,9 +537,9 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
         );
         const lastAttendance =
           attendances.length > 0
-            ? toKoreanTime(
-                attendances[attendances.length - 1].timestamp
-              ).format("YYYY-MM-DD HH:mm:ss")
+            ? moment(attendances[attendances.length - 1].timestamp)
+                .tz("Asia/Seoul")
+                .format("YYYY-MM-DD HH:mm:ss")
             : "N/A";
 
         // 오늘의 출석 상태 확인
