@@ -176,7 +176,7 @@ app.post("/api/login", async (req, res) => {
     const token = jwt.sign(
       { id: user._id, isAdmin: user.isAdmin, isReader: user.isReader },
       process.env.JWT_SECRET,
-      { expiresIn: "1h" }
+      { expiresIn: "7d" } // 1시간에서 7일로 변경
     );
     res.json({
       token,
@@ -416,7 +416,7 @@ function determineAttendanceStatus(timestamp) {
   const koreanTime = moment.tz(timestamp, "YYYY-MM-DD HH:mm:ss", "Asia/Seoul");
   const currentDate = koreanTime.clone().startOf("day");
 
-  const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:00";
+  const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
   const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:00";
 
   const [normalHour, normalMinute] = normalAttendanceTime.split(":").map(Number);
