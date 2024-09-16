@@ -5,7 +5,6 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const crypto = require("crypto");
 const moment = require("moment-timezone");
-const moment1 = require("moment");
 require("dotenv").config();
 
 const app = express();
@@ -342,6 +341,7 @@ app.post(
   }
 );
 
+// QR리더 라우트
 app.post("/api/admin/set-reader", verifyToken, isAdmin, async (req, res) => {
   try {
     const { userId, isReader } = req.body;
@@ -358,7 +358,7 @@ app.post("/api/admin/set-reader", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// Generate QR code data route
+// QR생성 라우트
 app.post("/api/generate-qr", verifyToken, async (req, res) => {
   try {
     const { studentId } = req.body;
