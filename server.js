@@ -176,7 +176,7 @@ app.post("/api/login", async (req, res) => {
     const token = jwt.sign(
       { id: user._id, isAdmin: user.isAdmin, isReader: user.isReader },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" } // 1시간에서 7일로 변경
+      { expiresIn: "7d" }
     );
     res.json({
       token,
@@ -420,15 +420,27 @@ function determineAttendanceStatus(timestamp) {
   const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
   const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:00";
 
-  const [normalHour, normalMinute] = normalAttendanceTime.split(":").map(Number);
+  const [normalHour, normalMinute] = normalAttendanceTime
+    .split(":")
+    .map(Number);
   const [lateHour, lateMinute] = lateAttendanceTime.split(":").map(Number);
 
-  const normalTime = currentDate.clone().add(normalHour, "hours").add(normalMinute, "minutes");
-  const lateTime = currentDate.clone().add(lateHour, "hours").add(lateMinute, "minutes");
+  const normalTime = currentDate
+    .clone()
+    .add(normalHour, "hours")
+    .add(normalMinute, "minutes");
+  const lateTime = currentDate
+    .clone()
+    .add(lateHour, "hours")
+    .add(lateMinute, "minutes");
 
   console.log(`Current time: ${koreanTime.format("YYYY-MM-DD HH:mm:ss")}`);
-  console.log(`Normal attendance time: ${normalTime.format("YYYY-MM-DD HH:mm:ss")}`);
-  console.log(`Late attendance time: ${lateTime.format("YYYY-MM-DD HH:mm:ss")}`);
+  console.log(
+    `Normal attendance time: ${normalTime.format("YYYY-MM-DD HH:mm:ss")}`
+  );
+  console.log(
+    `Late attendance time: ${lateTime.format("YYYY-MM-DD HH:mm:ss")}`
+  );
 
   if (koreanTime.isSameOrBefore(normalTime)) {
     return { status: "present", lateMinutes: 0 };
@@ -465,8 +477,15 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     console.log(`Determined status: ${status}, Late minutes: ${lateMinutes}`);
 
     // Check for existing attendance on the same day
-    const today = moment.tz(timestamp, "Asia/Seoul").startOf("day").format("YYYY-MM-DD");
-    const tomorrow = moment.tz(timestamp, "Asia/Seoul").add(1, "days").startOf("day").format("YYYY-MM-DD");
+    const today = moment
+      .tz(timestamp, "Asia/Seoul")
+      .startOf("day")
+      .format("YYYY-MM-DD");
+    const tomorrow = moment
+      .tz(timestamp, "Asia/Seoul")
+      .add(1, "days")
+      .startOf("day")
+      .format("YYYY-MM-DD");
 
     const existingAttendance = await Attendance.findOne({
       studentId,
@@ -518,8 +537,14 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
     let matchCondition = {};
     if (startDate && endDate) {
       matchCondition.timestamp = {
-        $gte: moment.tz(startDate, "Asia/Seoul").startOf('day').format("YYYY-MM-DD HH:mm:ss"),
-        $lte: moment.tz(endDate, "Asia/Seoul").endOf('day').format("YYYY-MM-DD HH:mm:ss"),
+        $gte: moment
+          .tz(startDate, "Asia/Seoul")
+          .startOf("day")
+          .format("YYYY-MM-DD HH:mm:ss"),
+        $lte: moment
+          .tz(endDate, "Asia/Seoul")
+          .endOf("day")
+          .format("YYYY-MM-DD HH:mm:ss"),
       };
     }
 
@@ -564,7 +589,10 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
           studentId: student.studentId,
           timestamp: {
             $gte: today,
-            $lt: moment.tz(today, "Asia/Seoul").add(1, "days").format("YYYY-MM-DD"),
+            $lt: moment
+              .tz(today, "Asia/Seoul")
+              .add(1, "days")
+              .format("YYYY-MM-DD"),
           },
         });
 
