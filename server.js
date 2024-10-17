@@ -700,3 +700,10 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       .json({ message: "서버 오류가 발생했습니다.", error: error.message });
   }
 });
+
+// 서버 실행
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
