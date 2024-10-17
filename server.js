@@ -19,7 +19,7 @@ mongoose
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error("MongoDB connection error:", err));
 
-// User model
+// User 모델
 const UserSchema = new mongoose.Schema({
   studentId: { type: String, required: true, unique: true },
   name: { type: String, required: true },
@@ -30,12 +30,28 @@ const UserSchema = new mongoose.Schema({
   isAdmin: { type: Boolean, default: false },
   isReader: { type: Boolean, default: false },
   isApproved: { type: Boolean, default: false },
+  refreshTokens: [{ token: String }], // 리프레시 토큰 추가
   timestamp: { type: Date, default: Date.now },
 });
 
 const User = mongoose.model("User", UserSchema);
 
-// Middleware to verify JWT token
+// 토큰 생성 유틸리티
+const generateAccessToken = (user) => {
+  return jwt.sign(
+    { id: user._id, isAdmin: user.isAdmin, isReader: user.isReader },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "15m" }
+  );
+};
+
+const generateRefreshToken = (user) => {
+  return jwt.sign({ id: user._id }, process.env.JWT_REFRESH_SECRET, {
+    expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || "7d",
+  });
+};
+
+// JWT 검증 미들웨어
 const verifyToken = (req, res, next) => {
   const authHeader = req.header("Authorization");
 
@@ -72,7 +88,7 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// Middleware to check if user is admin
+// 관리자 권한 확인 미들웨어
 const isAdmin = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id);
@@ -85,7 +101,7 @@ const isAdmin = async (req, res, next) => {
   }
 };
 
-// Middleware to check if user is reader
+// 리더 권한 확인 미들웨어
 const isReader = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id);
@@ -98,7 +114,7 @@ const isReader = async (req, res, next) => {
   }
 };
 
-// Routes
+// 회원가입 라우트
 app.post("/api/signup", async (req, res) => {
   try {
     const {
@@ -153,6 +169,7 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
+// 로그인 라우트 수정 (리프레시 토큰 포함)
 app.post("/api/login", async (req, res) => {
   try {
     const { studentId, password } = req.body;
@@ -173,13 +190,16 @@ app.post("/api/login", async (req, res) => {
       return res.status(400).json({ message: "비밀번호가 일치하지 않습니다." });
     }
 
-    const token = jwt.sign(
-      { id: user._id, isAdmin: user.isAdmin, isReader: user.isReader },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    // 리프레시 토큰을 데이터베이스에 저장
+    user.refreshTokens.push({ token: refreshToken });
+    await user.save();
+
     res.json({
-      token,
+      accessToken,
+      refreshToken,
       user: {
         id: user._id,
         studentId: user.studentId,
@@ -191,6 +211,45 @@ app.post("/api/login", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
+  }
+});
+
+// 리프레시 토큰을 사용해 액세스 토큰 갱신하는 라우트
+app.post("/api/token", async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(401).json({ message: "리프레시 토큰이 필요합니다." });
+    }
+
+    // 리프레시 토큰 검증
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return res
+        .status(401)
+        .json({ message: "유효하지 않은 리프레시 토큰입니다." });
+    }
+
+    // 데이터베이스에 리프레시 토큰 존재 여부 확인
+    const tokenExists = user.refreshTokens.find(
+      (t) => t.token === refreshToken
+    );
+    if (!tokenExists) {
+      return res
+        .status(401)
+        .json({ message: "리프레시 토큰이 존재하지 않습니다." });
+    }
+
+    // 새로운 액세스 토큰 생성
+    const newAccessToken = generateAccessToken(user);
+
+    res.json({ accessToken: newAccessToken });
+  } catch (error) {
+    console.error("리프레시 토큰 오류:", error);
+    res.status(403).json({ message: "유효하지 않은 리프레시 토큰입니다." });
   }
 });
 
@@ -277,25 +336,33 @@ app.post("/api/admin/set-admin", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// Logout route
-app.post("/api/logout", verifyToken, (req, res) => {
-  res.json({ success: true, message: "로그아웃되었습니다." });
-});
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-app.get("/api/admin/users", verifyToken, isAdmin, async (req, res) => {
+// 로그아웃 라우트 수정 (리프레시 토큰 제거)
+app.post("/api/logout", verifyToken, async (req, res) => {
   try {
-    const { grade, class: classNumber } = req.query;
-    let query = {};
-    if (grade) query.grade = Number(grade);
-    if (classNumber) query.class = Number(classNumber);
+    const { refreshToken } = req.body;
 
-    const users = await User.find(query).select("-password");
-    res.json(users);
+    if (!refreshToken) {
+      return res.status(400).json({ message: "리프레시 토큰이 필요합니다." });
+    }
+
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return res
+        .status(401)
+        .json({ message: "유효하지 않은 리프레시 토큰입니다." });
+    }
+
+    // 데이터베이스에서 리프레시 토큰 제거
+    user.refreshTokens = user.refreshTokens.filter(
+      (t) => t.token !== refreshToken
+    );
+    await user.save();
+
+    res.json({ success: true, message: "로그아웃되었습니다." });
   } catch (error) {
-    console.error("Error fetching users:", error);
+    console.error("로그아웃 중 오류 발생:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
