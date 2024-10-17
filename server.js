@@ -5,6 +5,7 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const crypto = require("crypto");
 const moment = require("moment-timezone");
+const moment1 = require("moment");
 require("dotenv").config();
 
 const app = express();
@@ -19,7 +20,7 @@ mongoose
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error("MongoDB connection error:", err));
 
-// User 모델
+// User model
 const UserSchema = new mongoose.Schema({
   studentId: { type: String, required: true, unique: true },
   name: { type: String, required: true },
@@ -30,28 +31,12 @@ const UserSchema = new mongoose.Schema({
   isAdmin: { type: Boolean, default: false },
   isReader: { type: Boolean, default: false },
   isApproved: { type: Boolean, default: false },
-  refreshTokens: [{ token: String }], // 리프레시 토큰 추가
   timestamp: { type: Date, default: Date.now },
 });
 
 const User = mongoose.model("User", UserSchema);
 
-// 토큰 생성 유틸리티
-const generateAccessToken = (user) => {
-  return jwt.sign(
-    { id: user._id, isAdmin: user.isAdmin, isReader: user.isReader },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "15m" }
-  );
-};
-
-const generateRefreshToken = (user) => {
-  return jwt.sign({ id: user._id }, process.env.JWT_REFRESH_SECRET, {
-    expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || "7d",
-  });
-};
-
-// JWT 검증 미들웨어
+// Middleware to verify JWT token
 const verifyToken = (req, res, next) => {
   const authHeader = req.header("Authorization");
 
@@ -88,7 +73,7 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// 관리자 권한 확인 미들웨어
+// Middleware to check if user is admin
 const isAdmin = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id);
@@ -101,7 +86,7 @@ const isAdmin = async (req, res, next) => {
   }
 };
 
-// 리더 권한 확인 미들웨어
+// Middleware to check if user is reader
 const isReader = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id);
@@ -114,7 +99,7 @@ const isReader = async (req, res, next) => {
   }
 };
 
-// 회원가입 라우트
+// Routes
 app.post("/api/signup", async (req, res) => {
   try {
     const {
@@ -169,7 +154,6 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
-// 로그인 라우트 수정 (리프레시 토큰 포함)
 app.post("/api/login", async (req, res) => {
   try {
     const { studentId, password } = req.body;
@@ -190,16 +174,13 @@ app.post("/api/login", async (req, res) => {
       return res.status(400).json({ message: "비밀번호가 일치하지 않습니다." });
     }
 
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
-
-    // 리프레시 토큰을 데이터베이스에 저장
-    user.refreshTokens.push({ token: refreshToken });
-    await user.save();
-
+    const token = jwt.sign(
+      { id: user._id, isAdmin: user.isAdmin, isReader: user.isReader },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
     res.json({
-      accessToken,
-      refreshToken,
+      token,
       user: {
         id: user._id,
         studentId: user.studentId,
@@ -211,45 +192,6 @@ app.post("/api/login", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
-  }
-});
-
-// 리프레시 토큰을 사용해 액세스 토큰 갱신하는 라우트
-app.post("/api/token", async (req, res) => {
-  try {
-    const { refreshToken } = req.body;
-
-    if (!refreshToken) {
-      return res.status(401).json({ message: "리프레시 토큰이 필요합니다." });
-    }
-
-    // 리프레시 토큰 검증
-    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    const user = await User.findById(decoded.id);
-
-    if (!user) {
-      return res
-        .status(401)
-        .json({ message: "유효하지 않은 리프레시 토큰입니다." });
-    }
-
-    // 데이터베이스에 리프레시 토큰 존재 여부 확인
-    const tokenExists = user.refreshTokens.find(
-      (t) => t.token === refreshToken
-    );
-    if (!tokenExists) {
-      return res
-        .status(401)
-        .json({ message: "리프레시 토큰이 존재하지 않습니다." });
-    }
-
-    // 새로운 액세스 토큰 생성
-    const newAccessToken = generateAccessToken(user);
-
-    res.json({ accessToken: newAccessToken });
-  } catch (error) {
-    console.error("리프레시 토큰 오류:", error);
-    res.status(403).json({ message: "유효하지 않은 리프레시 토큰입니다." });
   }
 });
 
@@ -336,33 +278,25 @@ app.post("/api/admin/set-admin", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// 로그아웃 라우트 수정 (리프레시 토큰 제거)
-app.post("/api/logout", verifyToken, async (req, res) => {
+// Logout route
+app.post("/api/logout", verifyToken, (req, res) => {
+  res.json({ success: true, message: "로그아웃되었습니다." });
+});
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+app.get("/api/admin/users", verifyToken, isAdmin, async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    const { grade, class: classNumber } = req.query;
+    let query = {};
+    if (grade) query.grade = Number(grade);
+    if (classNumber) query.class = Number(classNumber);
 
-    if (!refreshToken) {
-      return res.status(400).json({ message: "리프레시 토큰이 필요합니다." });
-    }
-
-    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    const user = await User.findById(decoded.id);
-
-    if (!user) {
-      return res
-        .status(401)
-        .json({ message: "유효하지 않은 리프레시 토큰입니다." });
-    }
-
-    // 데이터베이스에서 리프레시 토큰 제거
-    user.refreshTokens = user.refreshTokens.filter(
-      (t) => t.token !== refreshToken
-    );
-    await user.save();
-
-    res.json({ success: true, message: "로그아웃되었습니다." });
+    const users = await User.find(query).select("-password");
+    res.json(users);
   } catch (error) {
-    console.error("로그아웃 중 오류 발생:", error);
+    console.error("Error fetching users:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
@@ -408,7 +342,6 @@ app.post(
   }
 );
 
-// QR리더 라우트
 app.post("/api/admin/set-reader", verifyToken, isAdmin, async (req, res) => {
   try {
     const { userId, isReader } = req.body;
@@ -425,11 +358,11 @@ app.post("/api/admin/set-reader", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// QR생성 라우트
+// Generate QR code data route
 app.post("/api/generate-qr", verifyToken, async (req, res) => {
   try {
     const { studentId } = req.body;
-    const timestamp = toKoreanTimeString(new Date()); // 현재 시간을 한국 시간 문자열로 변환
+    const timestamp = new Date().toISOString(); // 현재 시간 사용
 
     const qrData = `${studentId}|${timestamp}`;
 
@@ -462,27 +395,30 @@ app.post("/api/generate-qr", verifyToken, async (req, res) => {
 });
 
 // 한국 시간으로 변환하는 함수
-function toKoreanTimeString(date) {
-  return moment(date).tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss");
+function toKoreanTime(date) {
+  return moment(date).tz("Asia/Seoul");
 }
 
 // Attendance model
 const AttendanceSchema = new mongoose.Schema({
   studentId: { type: String, required: true },
   timestamp: {
-    type: String,
+    type: Date,
     required: true,
+    get: (v) => moment(v).tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss"),
+    set: (v) => moment.tz(v, "Asia/Seoul").utc().toDate(),
   },
   status: { type: String, enum: ["present", "late", "absent"], required: true },
   lateMinutes: { type: Number, default: 0 },
 });
 
+AttendanceSchema.set("toJSON", { getters: true });
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
 // 출석 상태 결정 함수 수정
 function determineAttendanceStatus(timestamp) {
-  const koreanTime = moment.tz(timestamp, "YYYY-MM-DD HH:mm:ss", "Asia/Seoul");
-  const currentDate = koreanTime.clone().startOf("day");
+  const koreanTime = toKoreanTime(timestamp);
+  const currentDate = koreanTime.startOf("day");
 
   const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
   const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:00";
@@ -492,24 +428,14 @@ function determineAttendanceStatus(timestamp) {
     .map(Number);
   const [lateHour, lateMinute] = lateAttendanceTime.split(":").map(Number);
 
-  const normalTime = currentDate
-    .clone()
+  const normalTime = moment(currentDate)
     .add(normalHour, "hours")
     .add(normalMinute, "minutes");
-  const lateTime = currentDate
-    .clone()
+  const lateTime = moment(currentDate)
     .add(lateHour, "hours")
     .add(lateMinute, "minutes");
 
-  console.log(`Current time: ${koreanTime.format("YYYY-MM-DD HH:mm:ss")}`);
-  console.log(
-    `Normal attendance time: ${normalTime.format("YYYY-MM-DD HH:mm:ss")}`
-  );
-  console.log(
-    `Late attendance time: ${lateTime.format("YYYY-MM-DD HH:mm:ss")}`
-  );
-
-  if (koreanTime.isSameOrBefore(normalTime)) {
+  if (koreanTime.isBefore(normalTime)) {
     return { status: "present", lateMinutes: 0 };
   } else if (koreanTime.isBefore(lateTime)) {
     const lateMinutes = koreanTime.diff(normalTime, "minutes");
@@ -534,31 +460,18 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     );
     let decrypted = decipher.update(encrypted);
     decrypted = Buffer.concat([decrypted, decipher.final()]);
-    const [studentId, timestamp] = decrypted.toString().split("|");
-
-    console.log(`Decrypted timestamp: ${timestamp}`);
-
-    // 출석 상태 결정
-    const { status, lateMinutes } = determineAttendanceStatus(timestamp);
-
-    console.log(`Determined status: ${status}, Late minutes: ${lateMinutes}`);
+    const [studentId, timestampStr] = decrypted.toString().split("|");
+    const timestamp = toKoreanTime(timestampStr).toDate();
 
     // Check for existing attendance on the same day
-    const today = moment
-      .tz(timestamp, "Asia/Seoul")
-      .startOf("day")
-      .format("YYYY-MM-DD");
-    const tomorrow = moment
-      .tz(timestamp, "Asia/Seoul")
-      .add(1, "days")
-      .startOf("day")
-      .format("YYYY-MM-DD");
+    const today = moment(timestamp).tz("Asia/Seoul").startOf("day");
+    const tomorrow = moment(today).add(1, "days");
 
     const existingAttendance = await Attendance.findOne({
       studentId,
       timestamp: {
-        $gte: today,
-        $lt: tomorrow,
+        $gte: today.toDate(),
+        $lt: tomorrow.toDate(),
       },
     });
 
@@ -567,6 +480,9 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
         .status(400)
         .json({ message: "이미 오늘 출석이 기록되었습니다." });
     }
+
+    // 출석 상태 결정
+    const { status, lateMinutes } = determineAttendanceStatus(timestamp);
 
     // 출석 기록 생성 및 저장
     const attendance = new Attendance({
@@ -577,8 +493,6 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     });
 
     await attendance.save();
-
-    console.log(`Saved attendance: ${JSON.stringify(attendance)}`);
 
     let message;
     if (status === "present") {
@@ -600,18 +514,12 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
   try {
     const { startDate, endDate, grade, classNum } = req.query;
 
-    // 쿼리 조건 설정 (한국 시간 기준)
+    // 쿼리 조건 설정
     let matchCondition = {};
     if (startDate && endDate) {
       matchCondition.timestamp = {
-        $gte: moment
-          .tz(startDate, "Asia/Seoul")
-          .startOf("day")
-          .format("YYYY-MM-DD HH:mm:ss"),
-        $lte: moment
-          .tz(endDate, "Asia/Seoul")
-          .endOf("day")
-          .format("YYYY-MM-DD HH:mm:ss"),
+        $gte: new Date(startDate),
+        $lte: new Date(endDate),
       };
     }
 
@@ -625,7 +533,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       "studentId name grade class number"
     );
 
-    const today = moment().tz("Asia/Seoul").startOf("day").format("YYYY-MM-DD");
+    const today = moment().tz("Asia/Seoul").startOf("day");
 
     // 각 학생별 통계 계산
     const studentStats = await Promise.all(
@@ -648,18 +556,17 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
         );
         const lastAttendance =
           attendances.length > 0
-            ? attendances[attendances.length - 1].timestamp
+            ? moment(attendances[attendances.length - 1].timestamp).format(
+                "YYYY-MM-DD HH:mm:ss"
+              )
             : "N/A";
 
         // 오늘의 출석 상태 확인
         const todayAttendance = await Attendance.findOne({
           studentId: student.studentId,
           timestamp: {
-            $gte: today,
-            $lt: moment
-              .tz(today, "Asia/Seoul")
-              .add(1, "days")
-              .format("YYYY-MM-DD"),
+            $gte: today.toDate(),
+            $lt: moment(today).add(1, "days").toDate(),
           },
         });
 
@@ -676,7 +583,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
           absentCount,
           totalLateMinutes,
           lastAttendance,
-          todayStatus,
+          todayStatus, // 오늘의 출석 상태 추가
         };
       })
     );
@@ -699,11 +606,4 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       .status(500)
       .json({ message: "서버 오류가 발생했습니다.", error: error.message });
   }
-});
-
-// 서버 실행
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
 });
