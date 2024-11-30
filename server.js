@@ -38,11 +38,41 @@ const UserSchema = new mongoose.Schema({
 
 const User = mongoose.model("User", UserSchema);
 
-// Middleware to verify JWT token
+// JWT Secret 키 확인
+if (!process.env.JWT_SECRET || !process.env.REFRESH_TOKEN_SECRET) {
+  console.error(
+    "JWT_SECRET or REFRESH_TOKEN_SECRET is not defined in environment variables"
+  );
+  process.exit(1);
+}
+
+// JWT 토큰 생성 함수
+const generateAccessToken = (user) => {
+  return jwt.sign(
+    {
+      id: user._id,
+      studentId: user.studentId,
+      isAdmin: user.isAdmin,
+      isReader: user.isReader,
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || "1h" }
+  );
+};
+
+// 리프레시 토큰 생성 함수
+const generateRefreshToken = () => {
+  return crypto.randomBytes(40).toString("hex");
+};
+
+// 리프레시 토큰 만료 시간 설정
+const REFRESH_TOKEN_EXPIRES_IN =
+  process.env.REFRESH_TOKEN_EXPIRES_IN || 7 * 24 * 60 * 60 * 1000; // 기본값 7일
+
+// 토큰 검증 미들웨어 수정
 const verifyToken = (req, res, next) => {
   try {
     const authHeader = req.header("Authorization");
-
     if (!authHeader) {
       return res.status(401).json({
         success: false,
@@ -51,7 +81,6 @@ const verifyToken = (req, res, next) => {
     }
 
     const [bearer, token] = authHeader.split(" ");
-
     if (bearer !== "Bearer" || !token) {
       return res.status(401).json({
         success: false,
@@ -59,26 +88,27 @@ const verifyToken = (req, res, next) => {
       });
     }
 
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = decoded;
-      next();
-    } catch (error) {
-      console.error("Token verification error:", error);
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+      if (err) {
+        console.error("Token verification error:", err);
 
-      if (error.name === "TokenExpiredError") {
+        if (err.name === "TokenExpiredError") {
+          return res.status(401).json({
+            success: false,
+            message: "토큰이 만료되었습니다.",
+            needRefresh: true,
+          });
+        }
+
         return res.status(401).json({
           success: false,
-          message: "토큰이 만료되었습니다.",
-          needRefresh: true,
+          message: "유효하지 않은 토큰입니다.",
         });
       }
 
-      return res.status(401).json({
-        success: false,
-        message: "유효하지 않은 토큰입니다.",
-      });
-    }
+      req.user = decoded;
+      next();
+    });
   } catch (error) {
     console.error("Token verification error:", error);
     return res.status(500).json({
@@ -189,24 +219,15 @@ app.post("/api/login", async (req, res) => {
       return res.status(400).json({ message: "비밀번호가 일치하지 않습니다." });
     }
 
-    // 토큰 생성
-    const accessToken = jwt.sign(
-      {
-        id: user._id,
-        studentId: user.studentId,
-        isAdmin: user.isAdmin,
-        isReader: user.isReader,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
+    // 액세스 토큰 생성
+    const accessToken = generateAccessToken(user);
 
     // 리프레시 토큰 생성
-    const refreshToken = crypto.randomBytes(40).toString("hex");
+    const refreshToken = generateRefreshToken();
     const refreshTokenDoc = new RefreshToken({
       userId: user._id,
       token: refreshToken,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7일
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRES_IN),
     });
 
     // 기존 리프레시 토큰 삭제
@@ -214,6 +235,7 @@ app.post("/api/login", async (req, res) => {
     await refreshTokenDoc.save();
 
     res.json({
+      success: true,
       accessToken,
       refreshToken,
       user: {
@@ -749,7 +771,6 @@ const RefreshToken = mongoose.model("RefreshToken", RefreshTokenSchema);
 app.post("/api/refresh-token", async (req, res) => {
   try {
     const { refreshToken } = req.body;
-
     if (!refreshToken) {
       return res.status(400).json({ message: "리프레시 토큰이 필요합니다." });
     }
@@ -761,6 +782,7 @@ app.post("/api/refresh-token", async (req, res) => {
 
     if (!refreshTokenDoc) {
       return res.status(401).json({
+        success: false,
         message: "유효하지 않거나 만료된 리프레시 토큰입니다.",
         needRelogin: true,
       });
@@ -770,31 +792,24 @@ app.post("/api/refresh-token", async (req, res) => {
     if (!user) {
       await RefreshToken.deleteOne({ _id: refreshTokenDoc._id });
       return res.status(401).json({
+        success: false,
         message: "사용자를 찾을 수 없습니다.",
         needRelogin: true,
       });
     }
 
     // 새로운 액세스 토큰 생성
-    const accessToken = jwt.sign(
-      {
-        id: user._id,
-        studentId: user.studentId,
-        isAdmin: user.isAdmin,
-        isReader: user.isReader,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
+    const accessToken = generateAccessToken(user);
 
     // 새로운 리프레시 토큰 생성
-    const newRefreshToken = crypto.randomBytes(40).toString("hex");
+    const newRefreshToken = generateRefreshToken();
     await RefreshToken.findByIdAndUpdate(refreshTokenDoc._id, {
       token: newRefreshToken,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRES_IN),
     });
 
     res.json({
+      success: true,
       accessToken,
       refreshToken: newRefreshToken,
       user: {
