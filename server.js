@@ -1314,16 +1314,19 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
       });
     }
 
+    // 새 휴일 생성 및 저장
     const holiday = new Holiday({
-      date,
+      date: moment(date).format("YYYY-MM-DD"), // 날짜 형식 통일
       reason,
       createdAt: new Date(),
     });
 
     await holiday.save();
+    console.log("Holiday saved:", holiday); // 저장 확인 로그
 
     // 저장된 휴일 목록을 다시 조회하여 반환
-    const holidays = await Holiday.find().sort({ date: -1 });
+    const holidays = await Holiday.find().sort({ date: 1 }); // 날짜순 정렬
+    console.log("Holidays found:", holidays); // 조회 결과 로그
 
     res.json({
       success: true,
@@ -1335,6 +1338,7 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "휴일 등록 중 오류가 발생했습니다.",
+      error: error.message,
     });
   }
 });
@@ -1342,7 +1346,9 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
 // 휴일 목록 조회 API 수정
 app.get("/api/holidays", verifyToken, async (req, res) => {
   try {
-    const holidays = await Holiday.find().sort({ date: -1 });
+    console.log("Fetching holidays..."); // 조회 시작 로그
+    const holidays = await Holiday.find().sort({ date: 1 });
+    console.log("Holidays found:", holidays); // 조회 결과 로그
 
     res.json({
       success: true,
@@ -1353,6 +1359,7 @@ app.get("/api/holidays", verifyToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "휴일 목록 조회 중 오류가 발생했습니다.",
+      error: error.message,
     });
   }
 });
