@@ -495,12 +495,14 @@ const AttendanceSchema = new mongoose.Schema({
   timestamp: { type: String, required: true },
   status: {
     type: String,
-    enum: ["present", "late", "absent", "excused"],
+    enum: ["present", "late", "absent"],
     required: true,
   },
   lateMinutes: { type: Number, default: 0 },
-  reason: { type: String },
   isExcused: { type: Boolean, default: false },
+  reason: { type: String },
+  excusedAt: { type: Date },
+  excusedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 });
 
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
@@ -909,11 +911,12 @@ app.post("/api/refresh-token", async (req, res) => {
   }
 });
 
-// 인정결석 처리 API
+// 인정결석 처리 API 수정
 app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
   try {
     const { studentId, date, reason } = req.body;
 
+    // 해당 날짜의 출석 기록 찾기
     const attendance = await Attendance.findOne({
       studentId,
       timestamp: {
@@ -923,18 +926,41 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
     });
 
     if (!attendance) {
-      return res
-        .status(404)
-        .json({ message: "해당 날짜의 출석 기록을 찾을 수 없습니다." });
+      // 출석 기록이 없는 경우 새로 생성
+      const newAttendance = new Attendance({
+        studentId,
+        timestamp: moment.tz(date, "Asia/Seoul").format(),
+        status: "absent", // 기본값은 결석
+        isExcused: true,
+        reason,
+      });
+      await newAttendance.save();
+      return res.json({
+        success: true,
+        message: "인정결석이 새로 등록되었습니다.",
+        attendance: newAttendance,
+      });
     }
 
+    // 기존 출석 기록을 인정결석으로 변경
+    attendance.status = "absent"; // 상태를 결석으로 변경
     attendance.isExcused = true;
     attendance.reason = reason;
+    attendance.lateMinutes = 0; // 지각 시간 초기화
+
     await attendance.save();
 
-    res.json({ message: "인정결석 처리가 완료되었습니다." });
+    res.json({
+      success: true,
+      message: "인정결석 처리가 완료되었습니다.",
+      attendance,
+    });
   } catch (error) {
     console.error("인정결석 처리 중 오류:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    res.status(500).json({
+      success: false,
+      message: "인정결석 처리 중 오류가 발생했습니다.",
+      error: error.message,
+    });
   }
 });
