@@ -12,7 +12,11 @@ const app = express();
 // Middleware
 app.use(
   cors({
-    origin: "*", // 개발 중에는 모든 도메인 허용
+    origin: [
+      "https://port-0-attend-backend-m0tl39wtc3a73922.sel4.cloudtype.app",
+      "exp://", // Expo 개발 환경 허용
+      "http://localhost", // 로컬 개발 환경 허용
+    ],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
@@ -163,9 +167,10 @@ app.post("/api/signup", async (req, res) => {
 app.post("/api/login", async (req, res) => {
   try {
     const { studentId, password } = req.body;
-    console.log("로그인 요청:", { studentId }); // 디버깅용
+    console.log("로그인 요청 데이터:", { studentId, password }); // 요청 데이터 로깅
 
     if (!studentId || !password) {
+      console.log("필수 필드 누락"); // 유효성 검사 로깅
       return res.status(400).json({
         success: false,
         message: "학번과 비밀번호를 모두 입력해주세요.",
@@ -173,9 +178,10 @@ app.post("/api/login", async (req, res) => {
     }
 
     const user = await User.findOne({ studentId });
-    console.log("사용자 찾음:", user ? "있음" : "없음"); // 디버깅용
+    console.log("조회된 사용자:", user ? "있음" : "없음"); // 사용자 조회 결과 로깅
 
     if (!user) {
+      console.log("사용자 없음"); // 사용자 없음 로깅
       return res.status(400).json({
         success: false,
         message: "존재하지 않는 학번입니다.",
@@ -183,6 +189,7 @@ app.post("/api/login", async (req, res) => {
     }
 
     if (!user.isApproved) {
+      console.log("미승인 사용자"); // 승인 상태 로깅
       return res.status(400).json({
         success: false,
         message: "관리자의 승인을 기다리고 있습니다.",
@@ -190,9 +197,10 @@ app.post("/api/login", async (req, res) => {
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
-    console.log("비밀번호 일치:", isMatch); // 디버깅용
+    console.log("비밀번호 일치 여부:", isMatch); // 비밀번호 검증 결과 로깅
 
     if (!isMatch) {
+      console.log("비밀번호 불일치"); // 비밀번호 불일치 로깅
       return res.status(400).json({
         success: false,
         message: "비밀번호가 일치하지 않습니다.",
@@ -205,6 +213,8 @@ app.post("/api/login", async (req, res) => {
       { expiresIn: "7d" }
     );
 
+    console.log("로그인 성공, 토큰 생성됨"); // 성공 로깅
+
     res.json({
       success: true,
       token,
@@ -214,10 +224,13 @@ app.post("/api/login", async (req, res) => {
         name: user.name,
         isAdmin: user.isAdmin,
         isReader: user.isReader,
+        grade: user.grade,
+        class: user.class,
+        number: user.number,
       },
     });
   } catch (error) {
-    console.error("로그인 처리 중 에러:", error); // 디버깅용
+    console.error("로그인 처리 중 에러:", error); // 에러 상세 로깅
     res.status(500).json({
       success: false,
       message: "서버 오류가 발생했습니다.",
