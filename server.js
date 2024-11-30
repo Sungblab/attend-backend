@@ -224,7 +224,7 @@ app.post("/api/login", async (req, res) => {
     if (!user) {
       return res.status(400).json({
         success: false,
-        message: "존재하지 않는 학번입니다.",
+        message: "��재하지 않는 학번입니다.",
       });
     }
 
@@ -799,7 +799,7 @@ async function calculateMonthlyRankings(students, type, limit = 3) {
         },
       });
 
-      // 출석 횟수 계산
+      // 출석 횟수 계��
       const presentCount = attendances.filter(
         (a) => a.status === "present"
       ).length;
@@ -1284,10 +1284,12 @@ app.get("/api/attendance/excused", verifyToken, async (req, res) => {
   }
 });
 
+// Holiday 모델 추가
 const HolidaySchema = new mongoose.Schema({
-  date: { type: String, required: true, unique: true },
+  date: { type: Date, required: true, unique: true },
   reason: { type: String, required: true },
   createdAt: { type: Date, default: Date.now },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 });
 
 const Holiday = mongoose.model("Holiday", HolidaySchema);
@@ -1297,91 +1299,107 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
   try {
     const { date, reason } = req.body;
 
-    if (!date || !reason) {
-      return res.status(400).json({
-        success: false,
-        message: "날짜와 사유를 모두 입력해주세요.",
-      });
-    }
-
-    // 날짜 형식 검증
-    if (!moment(date, "YYYY-MM-DD", true).isValid()) {
-      return res.status(400).json({
-        success: false,
-        message: "올바른 날짜 형식이 아닙니다.",
-      });
-    }
-
     // 이미 존재하는 휴일인지 확인
-    const existingHoliday = await Holiday.findOne({ date });
+    const existingHoliday = await Holiday.findOne({
+      date: moment(date).startOf("day").toDate(),
+    });
+
     if (existingHoliday) {
       return res.status(400).json({
         success: false,
-        message: "해당 날짜에 이미 휴일이 등록되어 있습니다.",
+        message: "이미 등록된 휴일입니다.",
       });
     }
 
-    // 새 휴일 생성 및 저장
     const holiday = new Holiday({
-      date,
+      date: moment(date).startOf("day").toDate(),
       reason,
-      createdAt: new Date(),
+      createdBy: req.user.id,
     });
 
     await holiday.save();
 
-    // 저장된 휴일 목록을 다시 조회하여 반환
-    const holidays = await Holiday.find().sort({ date: 1 });
-
     res.json({
       success: true,
       message: "휴일이 등록되었습니다.",
-      holidays,
+      holiday,
     });
   } catch (error) {
     console.error("휴일 등록 중 오류:", error);
     res.status(500).json({
       success: false,
       message: "휴일 등록 중 오류가 발생했습니다.",
-      error: error.message,
+    });
+  }
+});
+
+// 휴일 목록 조회 API
+app.get("/api/holidays", verifyToken, async (req, res) => {
+  try {
+    const holidays = await Holiday.find()
+      .sort({ date: 1 })
+      .populate("createdBy", "name");
+
+    res.json({
+      success: true,
+      holidays: holidays.map((h) => ({
+        id: h._id,
+        date: moment(h.date).format("YYYY-MM-DD"),
+        reason: h.reason,
+        createdAt: h.createdAt,
+        createdBy: h.createdBy?.name || "알 수 없음",
+      })),
+    });
+  } catch (error) {
+    console.error("휴일 목록 조회 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "휴일 목록 조회 중 오류가 발생했습니다.",
     });
   }
 });
 
 // 휴일 삭제 API
-app.delete("/api/holidays/:date", verifyToken, isAdmin, async (req, res) => {
+app.delete("/api/holidays/:id", verifyToken, isAdmin, async (req, res) => {
   try {
-    const { date } = req.params;
-
-    // 날짜 형식 검증
-    if (!moment(date, "YYYY-MM-DD", true).isValid()) {
-      return res.status(400).json({
-        success: false,
-        message: "올바른 날짜 형식이 아닙니다.",
-      });
-    }
-
-    const deletedHoliday = await Holiday.findOneAndDelete({ date });
-    if (!deletedHoliday) {
-      return res.status(404).json({
-        success: false,
-        message: "해당 휴일을 찾을 수 없습니다.",
-      });
-    }
-
-    const holidays = await Holiday.find().sort({ date: 1 });
+    const { id } = req.params;
+    await Holiday.findByIdAndDelete(id);
 
     res.json({
       success: true,
       message: "휴일이 삭제되었습니다.",
-      holidays,
     });
   } catch (error) {
     console.error("휴일 삭제 중 오류:", error);
     res.status(500).json({
       success: false,
       message: "휴일 삭제 중 오류가 발생했습니다.",
-      error: error.message,
     });
   }
 });
+
+// 자동 결석 처리 함수 수정
+async function handleAutoAbsent() {
+  try {
+    const now = moment().tz("Asia/Seoul");
+    const today = now.startOf("day");
+
+    // 주말인지 확인
+    const isWeekend = now.day() === 0 || now.day() === 6;
+
+    // 휴일인지 확인
+    const isHoliday = await Holiday.findOne({
+      date: today.toDate(),
+    });
+
+    // 주말이나 휴일이면 처리하지 않음
+    if (isWeekend || isHoliday) {
+      console.log("오늘은 휴일이므로 자동 결석 처리를 건너뜁니다.");
+      return;
+    }
+
+    // 기존 자동 결석 처리 로직...
+  } catch (error) {
+    console.error("자동 결석 처리 중 오류:", error);
+  }
+}
