@@ -187,9 +187,12 @@ app.post("/api/login", async (req, res) => {
 
     const tokens = await generateTokens(user);
 
+<<<<<<< HEAD
     // 기존 세션 정리
     await RefreshToken.deleteMany({ userId: user._id });
 
+=======
+>>>>>>> ec49949abf67c6d90e70a6df69ec8b3015a34ef8
     res.json({
       ...tokens,
       user: {
@@ -711,6 +714,7 @@ const RefreshToken = mongoose.model("RefreshToken", RefreshTokenSchema);
 
 // 토큰 생성 함수
 const generateTokens = async (user) => {
+<<<<<<< HEAD
   try {
     const accessToken = jwt.sign(
       {
@@ -740,31 +744,58 @@ const generateTokens = async (user) => {
     console.error("Token generation error:", error);
     throw new Error("토큰 생성 중 오류가 발생했습니다.");
   }
+=======
+  const accessToken = jwt.sign(
+    { id: user._id, isAdmin: user.isAdmin, isReader: user.isReader },
+    process.env.JWT_SECRET,
+    { expiresIn: "1h" }
+  );
+
+  const refreshToken = crypto.randomBytes(40).toString("hex");
+  const refreshTokenDoc = new RefreshToken({
+    userId: user._id,
+    token: refreshToken,
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7일
+  });
+  await refreshTokenDoc.save();
+
+  return { accessToken, refreshToken };
+>>>>>>> ec49949abf67c6d90e70a6df69ec8b3015a34ef8
 };
 
 // 리프레시 토큰 엔드포인트
 app.post("/api/refresh-token", async (req, res) => {
   try {
     const { refreshToken } = req.body;
+<<<<<<< HEAD
 
     if (!refreshToken) {
       return res.status(400).json({ message: "리프레시 토큰이 필요합니다." });
     }
 
+=======
+>>>>>>> ec49949abf67c6d90e70a6df69ec8b3015a34ef8
     const refreshTokenDoc = await RefreshToken.findOne({
       token: refreshToken,
       expiresAt: { $gt: new Date() },
     });
 
     if (!refreshTokenDoc) {
+<<<<<<< HEAD
       return res.status(401).json({
         message: "유효하지 않은 리프레시 토큰입니다.",
         needRelogin: true,
       });
+=======
+      return res
+        .status(401)
+        .json({ message: "유효하지 않은 리프레시 토큰입니다." });
+>>>>>>> ec49949abf67c6d90e70a6df69ec8b3015a34ef8
     }
 
     const user = await User.findById(refreshTokenDoc.userId);
     if (!user) {
+<<<<<<< HEAD
       await RefreshToken.deleteOne({ _id: refreshTokenDoc._id });
       return res.status(401).json({
         message: "사용자를 찾을 수 없습니다.",
@@ -773,11 +804,17 @@ app.post("/api/refresh-token", async (req, res) => {
     }
 
     // 새로운 토큰 쌍 생성
+=======
+      return res.status(401).json({ message: "사용자를 찾을 수 없습니다." });
+    }
+
+>>>>>>> ec49949abf67c6d90e70a6df69ec8b3015a34ef8
     const tokens = await generateTokens(user);
 
     // 이전 리프레시 토큰 삭제
     await RefreshToken.deleteOne({ _id: refreshTokenDoc._id });
 
+<<<<<<< HEAD
     res.json({
       ...tokens,
       user: {
@@ -794,6 +831,12 @@ app.post("/api/refresh-token", async (req, res) => {
       message: "서버 오류가 발생했습니다.",
       error: error.message,
     });
+=======
+    res.json(tokens);
+  } catch (error) {
+    console.error("Refresh token error:", error);
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+>>>>>>> ec49949abf67c6d90e70a6df69ec8b3015a34ef8
   }
 });
 
