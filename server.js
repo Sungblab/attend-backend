@@ -827,12 +827,13 @@ const validatePassword = (password) => {
 };
 
 // 2. 요청 제한 미웨어 가
+app.set("trust proxy", 1); // 프록시 신뢰 설정 추가
+
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15분
-  max: 100, // IP당 대 요청 수
+  max: 100, // IP당 최대 요청 수
   standardHeaders: true,
   legacyHeaders: false,
-  trustProxy: true,
 });
 
 app.use(limiter);
@@ -1481,12 +1482,22 @@ app.delete("/api/holidays/:date", verifyToken, isAdmin, async (req, res) => {
 // 전역 에러 핸들러 추가
 app.use((err, req, res, next) => {
   console.error("서버 오류:", err);
+
+  // 특정 에러 타입에 따른 처리
+  if (err.code === "ERR_ERL_UNEXPECTED_X_FORWARDED_FOR") {
+    return res.status(500).json({
+      success: false,
+      message: "요청 제한 설정 오류가 발생했습니다.",
+    });
+  }
+
   res.status(500).json({
     success: false,
     message:
       process.env.NODE_ENV === "production"
         ? "서버 오류가 발생했습니다."
         : err.message,
+    error: process.env.NODE_ENV === "development" ? err : undefined,
   });
 });
 
@@ -1497,3 +1508,63 @@ app.use((req, res) => {
     message: "요청한 리소스를 찾을 수 없습니다.",
   });
 });
+
+// 월간 랭킹 계산 함수 추가
+async function calculateMonthlyRankings(students, type, limit = 3) {
+  try {
+    const thisMonth = moment().tz("Asia/Seoul").startOf("month");
+    const lastMonth = moment()
+      .tz("Asia/Seoul")
+      .subtract(1, "month")
+      .startOf("month");
+
+    const rankings = await Promise.all(
+      students.map(async (student) => {
+        // 이번 달 통계
+        const thisMonthStats = await calculateMonthlyStats(
+          student.studentId,
+          thisMonth
+        );
+        // 지난 달 통계
+        const lastMonthStats = await calculateMonthlyStats(
+          student.studentId,
+          lastMonth
+        );
+
+        // 개선도 계산
+        const improvement = calculateImprovement(
+          lastMonthStats,
+          thisMonthStats
+        );
+
+        return {
+          studentId: student.studentId,
+          name: student.name,
+          grade: student.grade,
+          class: student.class,
+          number: student.number,
+          improvement,
+          count:
+            type === "present" ? thisMonthStats.present : thisMonthStats.late,
+          lateMinutes: thisMonthStats.lateMinutes,
+        };
+      })
+    );
+
+    // 정렬 및 상위 N개 반환
+    return rankings
+      .sort((a, b) => {
+        if (type === "present") {
+          return b.count - a.count;
+        } else if (type === "late") {
+          return b.count - a.count || b.lateMinutes - a.lateMinutes;
+        } else {
+          return b.improvement - a.improvement;
+        }
+      })
+      .slice(0, limit);
+  } catch (error) {
+    console.error("월간 랭킹 계산 중 오류:", error);
+    return [];
+  }
+}
