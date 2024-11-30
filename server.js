@@ -619,7 +619,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 
     res.status(201).json({ message, attendance });
   } catch (error) {
-    console.error("���석 처리 중 오류 발생:", error);
+    console.error("석 처리 중 오류 발생:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
@@ -656,6 +656,7 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
     const monthlyRankings = {
       attendance: await calculateMonthlyRankings(students, "present", 3),
       lateKings: await calculateMonthlyRankings(students, "late", 3),
+      improvement: await calculateMonthlyRankings(students, "improvement", 3),
     };
 
     // 전체 통계 계산
@@ -772,27 +773,27 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
 // 월간 랭킹 계산 함수 수정
 async function calculateMonthlyRankings(students, type, limit = 3) {
   const thisMonth = moment().tz("Asia/Seoul").startOf("month");
+  const lastMonth = moment()
+    .tz("Asia/Seoul")
+    .subtract(1, "month")
+    .startOf("month");
   const today = moment().tz("Asia/Seoul").endOf("day");
 
   const rankings = await Promise.all(
     students.map(async (student) => {
-      const attendances = await Attendance.find({
-        studentId: student.studentId,
-        timestamp: {
-          $gte: thisMonth.format(),
-          $lte: today.format(),
-        },
-      });
-
-      // 출석/지각 횟수 계산
-      const presentCount = attendances.filter(
-        (a) => a.status === "present"
-      ).length;
-      const lateCount = attendances.filter((a) => a.status === "late").length;
-      const totalLateMinutes = attendances.reduce(
-        (sum, a) => sum + (a.lateMinutes || 0),
-        0
+      // 이번 달 통계
+      const thisMonthStats = await calculateMonthStats(
+        student.studentId,
+        thisMonth
       );
+      // 지난 달 통계
+      const lastMonthStats = await calculateMonthStats(
+        student.studentId,
+        lastMonth
+      );
+
+      // 개선도 계산
+      const improvement = calculateImprovement(lastMonthStats, thisMonthStats);
 
       return {
         studentId: student.studentId,
@@ -800,20 +801,24 @@ async function calculateMonthlyRankings(students, type, limit = 3) {
         grade: student.grade,
         class: student.class,
         number: student.number,
-        count: type === "present" ? presentCount : lateCount,
-        lateMinutes: totalLateMinutes,
+        improvement,
+        count:
+          type === "present" ? thisMonthStats.present : thisMonthStats.late,
+        lateMinutes: thisMonthStats.lateMinutes,
       };
     })
   );
 
-  // 정렬 (출석왕: 출석 많은 순, 지각왕: 지각 많은 순)
+  // 정렬 및 상위 N개 반환
   return rankings
     .sort((a, b) => {
       if (type === "present") {
         return b.count - a.count;
+      } else if (type === "late") {
+        return b.count - a.count || b.lateMinutes - a.lateMinutes;
+      } else {
+        return b.improvement - a.improvement;
       }
-      // 지각왕의 경우 지각 횟수가 많고, 지각 시간이 긴 순
-      return b.count - a.count || b.lateMinutes - a.lateMinutes;
     })
     .slice(0, limit);
 }
@@ -933,7 +938,7 @@ app.post("/api/refresh-token", async (req, res) => {
   }
 });
 
-// 인정결석 처리 API
+// 인정결석 처리 API 수정
 app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
   try {
     const { studentId, date, reason } = req.body;
@@ -954,8 +959,8 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
       },
     });
 
+    // 출석 기록이 없는 경우 새로 생성
     if (!attendance) {
-      // 출석 기록이 없는 경우 새로 생성
       const newAttendance = new Attendance({
         studentId,
         timestamp: moment.tz(date, "Asia/Seoul").format(),
@@ -984,10 +989,14 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
 
     await attendance.save();
 
+    // 변경된 통계 데이터도 함께 반환
+    const updatedStats = await calculateMonthStats(studentId, moment(date));
+
     res.json({
       success: true,
       message: "인정결석 처리가 완료되었습니다.",
       attendance,
+      stats: updatedStats,
     });
   } catch (error) {
     console.error("인정결석 처리 중 오류:", error);
