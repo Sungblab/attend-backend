@@ -1276,22 +1276,31 @@ app.get("/api/attendance/excused", verifyToken, async (req, res) => {
   }
 });
 
-// 휴일 관리를 위한 스키마 추가
+// 휴일 관리를 위한 스키마 수정
 const HolidaySchema = new mongoose.Schema({
-  date: { type: Date, required: true, unique: true },
+  date: { type: String, required: true, unique: true }, // Date 타입 대신 String으로 변경
   reason: { type: String, required: true },
   createdAt: { type: Date, default: Date.now },
 });
 
 const Holiday = mongoose.model("Holiday", HolidaySchema);
 
-// 휴일 등록 API
+// 휴일 등록 API 수정
 app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
   try {
     const { date, reason } = req.body;
 
+    // 이미 존재하는 휴일인지 확인
+    const existingHoliday = await Holiday.findOne({ date });
+    if (existingHoliday) {
+      return res.status(400).json({
+        success: false,
+        message: "해당 날짜에 이미 휴일이 등록되어 있습니다.",
+      });
+    }
+
     const holiday = new Holiday({
-      date: moment.tz(date, "Asia/Seoul").startOf("day"),
+      date,
       reason,
     });
 
