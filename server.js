@@ -844,6 +844,9 @@ const validatePassword = (password) => {
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15분
   max: 100, // IP당 대 요청 수
+  standardHeaders: true,
+  legacyHeaders: false,
+  trustProxy: true,
 });
 
 app.use(limiter);
@@ -1278,16 +1281,17 @@ app.post("/api/attendance/auto-absent", verifyToken, async (req, res) => {
       });
     }
 
-    // 오늘 출석하지 않은 학생들 조회
-    const unattendedStudents = await User.find({
-      _id: {
-        $nin: await Attendance.distinct("studentId", {
-          timestamp: {
-            $gte: moment(today).startOf("day").format(),
-            $lt: moment(today).endOf("day").format(),
-          },
-        }),
+    // 오늘 출석하지 않은 학생들 조회 (수정된 부분)
+    const attendedStudentIds = await Attendance.distinct("studentId", {
+      timestamp: {
+        $gte: moment(today).startOf("day").format(),
+        $lt: moment(today).endOf("day").format(),
       },
+    });
+
+    const unattendedStudents = await User.find({
+      studentId: { $nin: attendedStudentIds },
+      isApproved: true, // 승인된 학생만 대상으로
     });
 
     if (!unattendedStudents.length) {
