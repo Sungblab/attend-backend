@@ -939,7 +939,7 @@ app.post("/api/refresh-token", async (req, res) => {
     // 새로운 액세스 토큰 생성
     const accessToken = generateAccessToken(user);
 
-    // 새로��� 리프레시 토큰 생성
+    // 새로 리프레시 토큰 생성
     const newRefreshToken = generateRefreshToken();
     await RefreshToken.findByIdAndUpdate(refreshTokenDoc._id, {
       token: newRefreshToken,
@@ -1098,7 +1098,7 @@ function calculateImprovement(lastMonth, thisMonth) {
 
   // 가중치 적용
   improvement =
-    attendanceImprovement * 0.4 + // 출���률 개선 40%
+    attendanceImprovement * 0.4 + // 출률 개선 40%
     lateReduction * 0.2 + // 지각 횟수 감소 20%
     lateMinutesReduction * 0.2 + // 지각 시간 감소 20%
     absentReduction * 0.2; // 결석 감소 20%
@@ -1305,7 +1305,7 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
       });
     }
 
-    // 이미 재하는 휴일인지 확인
+    // 이미 존재하는 휴일인지 확인
     const existingHoliday = await Holiday.findOne({ date });
     if (existingHoliday) {
       return res.status(400).json({
@@ -1317,12 +1317,13 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
     const holiday = new Holiday({
       date,
       reason,
+      createdAt: new Date(),
     });
 
     await holiday.save();
 
     // 저장된 휴일 목록을 다시 조회하여 반환
-    const holidays = await Holiday.find().sort({ date: -1 }).limit(20);
+    const holidays = await Holiday.find().sort({ date: -1 });
 
     res.json({
       success: true,
@@ -1341,18 +1342,11 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
 // 휴일 목록 조회 API 수정
 app.get("/api/holidays", verifyToken, async (req, res) => {
   try {
-    const holidays = await Holiday.find().sort({ date: -1 }).limit(20);
-
-    if (!holidays) {
-      return res.json({
-        success: true,
-        holidays: [],
-      });
-    }
+    const holidays = await Holiday.find().sort({ date: -1 });
 
     res.json({
       success: true,
-      holidays,
+      holidays: holidays || [],
     });
   } catch (error) {
     console.error("휴일 목록 조회 중 오류:", error);
