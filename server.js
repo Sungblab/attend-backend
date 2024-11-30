@@ -619,7 +619,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 
     res.status(201).json({ message, attendance });
   } catch (error) {
-    console.error("출석 처리 중 오류 발생:", error);
+    console.error("���석 처리 중 오류 발생:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
@@ -655,7 +655,7 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
     // 월간 랭킹 계산
     const monthlyRankings = {
       attendance: await calculateMonthlyRankings(students, "present", 3),
-      punctuality: await calculateMonthlyRankings(students, "late", 3),
+      lateKings: await calculateMonthlyRankings(students, "late", 3),
     };
 
     // 전체 통계 계산
@@ -769,7 +769,7 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// 월간 랭킹 계산 함수 추가
+// 월간 랭킹 계산 함수 수정
 async function calculateMonthlyRankings(students, type, limit = 3) {
   const thisMonth = moment().tz("Asia/Seoul").startOf("month");
   const today = moment().tz("Asia/Seoul").endOf("day");
@@ -784,22 +784,15 @@ async function calculateMonthlyRankings(students, type, limit = 3) {
         },
       });
 
-      // 출석 횟수 계산
+      // 출석/지각 횟수 계산
       const presentCount = attendances.filter(
         (a) => a.status === "present"
       ).length;
-      // 지각 횟수와 시간 계산
       const lateCount = attendances.filter((a) => a.status === "late").length;
       const totalLateMinutes = attendances.reduce(
         (sum, a) => sum + (a.lateMinutes || 0),
         0
       );
-      // 결석 횟수 계산
-      const absentCount = attendances.filter(
-        (a) => a.status === "absent" && !a.isExcused
-      ).length;
-      // 인정결석 횟수 계산
-      const excusedCount = attendances.filter((a) => a.isExcused).length;
 
       return {
         studentId: student.studentId,
@@ -807,25 +800,20 @@ async function calculateMonthlyRankings(students, type, limit = 3) {
         grade: student.grade,
         class: student.class,
         number: student.number,
-        presentCount,
-        lateCount,
-        absentCount,
-        excusedCount,
-        totalLateMinutes,
         count: type === "present" ? presentCount : lateCount,
-        minutes: totalLateMinutes,
+        lateMinutes: totalLateMinutes,
       };
     })
   );
 
-  // 정렬 및 상위 N개 반환
+  // 정렬 (출석왕: 출석 많은 순, 지각왕: 지각 많은 순)
   return rankings
     .sort((a, b) => {
       if (type === "present") {
         return b.count - a.count;
       }
-      // 지각의 경우 지각 횟수가 적은 순
-      return a.count - b.count || a.minutes - b.minutes;
+      // 지각왕의 경우 지각 횟수가 많고, 지각 시간이 긴 순
+      return b.count - a.count || b.lateMinutes - a.lateMinutes;
     })
     .slice(0, limit);
 }
