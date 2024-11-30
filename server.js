@@ -224,7 +224,7 @@ app.post("/api/login", async (req, res) => {
     if (!user) {
       return res.status(400).json({
         success: false,
-        message: "��재하지 않는 학번입니다.",
+        message: "재하지 않는 학번입니다.",
       });
     }
 
@@ -799,7 +799,7 @@ async function calculateMonthlyRankings(students, type, limit = 3) {
         },
       });
 
-      // 출석 횟수 계��
+      // 출석 횟수 계
       const presentCount = attendances.filter(
         (a) => a.status === "present"
       ).length;
@@ -1398,8 +1398,36 @@ async function handleAutoAbsent() {
       return;
     }
 
-    // 기존 자동 결석 처리 로직...
+    // 현재 시간이 9시 이후인지 확인
+    const cutoffTime = now.clone().hour(9).minute(0).second(0);
+    if (now.isBefore(cutoffTime)) {
+      console.log("아직 자동 결석 처리 시간이 되지 않았습니다.");
+      return;
+    }
+
+    // 자동 결석 처리 API 호출
+    const response = await axios.post(
+      "/api/attendance/auto-absent",
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+      }
+    );
+
+    if (response.data.success) {
+      showToast(
+        `${response.data.count}명의 학생이 결석 처리되었습니다.`,
+        "success"
+      );
+      await fetchAttendanceStats(); // 통계 새로고침
+    }
   } catch (error) {
     console.error("자동 결석 처리 중 오류:", error);
+    showToast(
+      error.response?.data?.message || "자동 결석 처리 중 오류가 발생했습니다.",
+      "error"
+    );
   }
 }
