@@ -844,6 +844,9 @@ const validatePassword = (password) => {
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15분
   max: 100, // IP당 대 요청 수
+  standardHeaders: true,
+  legacyHeaders: false,
+  trustProxy: true,
 });
 
 app.use(limiter);
@@ -1222,6 +1225,100 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
       success: false,
       message: "통계 조회 중 오류가 발생했습니다.",
       error: error.message,
+    });
+  }
+});
+
+// 인정결석 목록 조회 API
+app.get("/api/attendance/excused", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const excused = await Attendance.find({
+      isExcused: true,
+    })
+      .sort({ excusedAt: -1 })
+      .limit(20); // 최근 20개만 조회
+
+    const excusedWithDetails = await Promise.all(
+      excused.map(async (item) => {
+        const student = await User.findOne({ studentId: item.studentId });
+        return {
+          studentId: item.studentId,
+          studentName: student ? student.name : "Unknown",
+          date: item.timestamp,
+          reason: item.reason,
+          excusedAt: item.excusedAt,
+          excusedBy: item.excusedBy,
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      excused: excusedWithDetails,
+    });
+  } catch (error) {
+    console.error("인정결석 목록 조회 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "인정결석 목록 조회 중 오류가 발생했습니다.",
+      error: error.message,
+    });
+  }
+});
+
+// 자동 결석 처리 API
+app.post("/api/attendance/auto-absent", verifyToken, async (req, res) => {
+  try {
+    const today = moment().format("YYYY-MM-DD");
+    const now = moment();
+    const cutoffTime = moment().set({ hour: 9, minute: 0, second: 0 });
+
+    // 9시가 지났는지 확인
+    if (now.isBefore(cutoffTime)) {
+      return res.status(400).json({
+        success: false,
+        message: "아직 자동 결석 처리 시간이 되지 않았습니다.",
+      });
+    }
+
+    // 오늘 출석하지 않은 학생들 조회 (수정된 부분)
+    const attendedStudentIds = await Attendance.distinct("studentId", {
+      timestamp: {
+        $gte: moment(today).startOf("day").format(),
+        $lt: moment(today).endOf("day").format(),
+      },
+    });
+
+    const unattendedStudents = await User.find({
+      studentId: { $nin: attendedStudentIds },
+      isApproved: true, // 승인된 학생만 대상으로
+    });
+
+    if (!unattendedStudents.length) {
+      return res.json({ success: true, count: 0 });
+    }
+
+    // 결석 처리
+    const attendances = unattendedStudents.map((student) => ({
+      studentId: student.studentId,
+      timestamp: moment().format(),
+      status: "absent",
+      lateMinutes: 0,
+      isExcused: false,
+    }));
+
+    await Attendance.insertMany(attendances);
+
+    res.json({
+      success: true,
+      count: unattendedStudents.length,
+      message: `${unattendedStudents.length}명의 학생이 결석 처리되었습니다.`,
+    });
+  } catch (error) {
+    console.error("자동 결석 처리 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "자동 결석 처리 중 오류가 발생했습니다.",
     });
   }
 });
