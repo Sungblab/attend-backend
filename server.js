@@ -1225,3 +1225,40 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
     });
   }
 });
+
+// 인정결석 목록 조회 API
+app.get("/api/attendance/excused", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const excused = await Attendance.find({
+      isExcused: true,
+    })
+      .sort({ excusedAt: -1 })
+      .limit(20); // 최근 20개만 조회
+
+    const excusedWithDetails = await Promise.all(
+      excused.map(async (item) => {
+        const student = await User.findOne({ studentId: item.studentId });
+        return {
+          studentId: item.studentId,
+          studentName: student ? student.name : "Unknown",
+          date: item.timestamp,
+          reason: item.reason,
+          excusedAt: item.excusedAt,
+          excusedBy: item.excusedBy,
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      excused: excusedWithDetails,
+    });
+  } catch (error) {
+    console.error("인정결석 목록 조회 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "인정결석 목록 조회 중 오류가 발생했습니다.",
+      error: error.message,
+    });
+  }
+});
