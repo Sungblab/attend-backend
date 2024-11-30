@@ -456,7 +456,7 @@ app.post("/api/generate-qr", verifyToken, async (req, res) => {
       !process.env.ENCRYPTION_KEY ||
       process.env.ENCRYPTION_KEY.length !== 32
     ) {
-      throw new Error("유효하지 않�� 암호화 키");
+      throw new Error("유효하지 않 암호화 키");
     }
 
     const iv = crypto.randomBytes(16);
@@ -622,7 +622,8 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   }
 });
 
-app.get("/api/attendance/stats", verifyToken, async (req, res) => {
+// 출석 통계 API
+app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
   try {
     const { startDate, endDate, grade, classNum } = req.query;
     const today = moment().tz("Asia/Seoul").startOf("day");
@@ -642,14 +643,76 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
     if (grade) userMatchCondition.grade = parseInt(grade);
     if (classNum) userMatchCondition.class = parseInt(classNum);
 
-    const students = await User.find(userMatchCondition);
-    const studentIds = students.map((s) => s.studentId);
+    // 학생 목록 조회
+    const students = await User.find(userMatchCondition).sort({
+      grade: 1,
+      class: 1,
+      number: 1,
+    });
+
+    // 각 학생의 출석 통계 계산
+    const studentStats = await Promise.all(
+      students.map(async (student) => {
+        const attendances = await Attendance.find({
+          studentId: student.studentId,
+          ...matchCondition,
+        });
+
+        const presentCount = attendances.filter(
+          (a) => a.status === "present"
+        ).length;
+        const lateCount = attendances.filter((a) => a.status === "late").length;
+        const absentCount = attendances.filter(
+          (a) => a.status === "absent" && !a.isExcused
+        ).length;
+        const totalLateMinutes = attendances.reduce(
+          (sum, a) => sum + (a.lateMinutes || 0),
+          0
+        );
+
+        // 오늘의 출석 상태 확인
+        const todayAttendance = await Attendance.findOne({
+          studentId: student.studentId,
+          timestamp: {
+            $gte: today.format(),
+            $lt: today.add(1, "day").format(),
+          },
+        });
+
+        return {
+          studentId: student.studentId,
+          name: student.name,
+          grade: student.grade,
+          class: student.class,
+          number: student.number,
+          presentCount,
+          lateCount,
+          absentCount,
+          totalLateMinutes,
+          lastAttendance:
+            attendances.length > 0
+              ? moment(attendances[attendances.length - 1].timestamp).format(
+                  "YYYY-MM-DD HH:mm:ss"
+                )
+              : "없음",
+          todayStatus: todayAttendance ? todayAttendance.status : "미출석",
+        };
+      })
+    );
+
+    // 전체 통계
+    const overallStats = {
+      totalStudents: students.length,
+      totalPresent: studentStats.reduce((sum, s) => sum + s.presentCount, 0),
+      totalLate: studentStats.reduce((sum, s) => sum + s.lateCount, 0),
+      totalAbsent: studentStats.reduce((sum, s) => sum + s.absentCount, 0),
+    };
 
     // 이달의 출석왕
     const monthlyAttendanceKing = await Attendance.aggregate([
       {
         $match: {
-          studentId: { $in: studentIds },
+          studentId: { $in: students.map((s) => s.studentId) },
           timestamp: {
             $gte: thisMonth.format(),
             $lte: today.format(),
@@ -671,7 +734,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
     const lateKing = await Attendance.aggregate([
       {
         $match: {
-          studentId: { $in: studentIds },
+          studentId: { $in: students.map((s) => s.studentId) },
           status: "late",
           timestamp: {
             $gte: thisMonth.format(),
@@ -690,9 +753,9 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       { $limit: 1 },
     ]);
 
-    // 인정결석 통계
+    // 결석 통계
     const excusedAbsences = await Attendance.find({
-      studentId: { $in: studentIds },
+      studentId: { $in: students.map((s) => s.studentId) },
       isExcused: true,
       timestamp: {
         $gte: thisMonth.format(),
@@ -700,9 +763,8 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       },
     }).sort({ timestamp: -1 });
 
-    // 일반 결석 통계
     const absences = await Attendance.find({
-      studentId: { $in: studentIds },
+      studentId: { $in: students.map((s) => s.studentId) },
       status: "absent",
       isExcused: false,
       timestamp: {
@@ -711,16 +773,10 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       },
     }).sort({ timestamp: -1 });
 
-    // 기존 통계 데이터와 함께 반환
     res.json({
-      studentStats: await Promise.all(
-        students.map(async (student) => {
-          // ... 기존 학생별 통계 로직 ...
-        })
-      ),
-      overallStats: {
-        // ... 기존 전체 통계 ...
-      },
+      success: true,
+      studentStats,
+      overallStats,
       specialStats: {
         monthlyAttendanceKing: monthlyAttendanceKing[0],
         lateKing: lateKing[0],
@@ -729,8 +785,12 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("통계 조회 중 오류 발생:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    console.error("통계 조회 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "통계 조회 중 오류가 발생했습니다.",
+      error: error.message,
+    });
   }
 });
 
