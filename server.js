@@ -652,7 +652,7 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
       number: 1,
     });
 
-    // 월간 랭��� 계산
+    // 월간 랭 계산
     const monthlyRankings = {
       attendance: await calculateMonthlyRankings(students, "present", 3),
       lateKings: await calculateMonthlyRankings(students, "late", 3),
@@ -1220,15 +1220,37 @@ app.get("/api/attendance/excused", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
+// 마지막 자동 결석 처리 시간을 저장할 변수
+let lastAutoAbsentCheck = null;
+
 // 자동 결석 처리 API 수정
 app.post("/api/attendance/auto-absent", verifyToken, async (req, res) => {
   try {
     const today = moment().tz("Asia/Seoul");
     const todayStr = today.format("YYYY-MM-DD");
 
-    // 주말 체크
+    // 주늘 이미 체크했는지 확인
+    if (lastAutoAbsentCheck && lastAutoAbsentCheck === todayStr) {
+      return res.json({
+        success: true,
+        message: "오늘은 이미 자동 결석 처리가 완료되었습니다.",
+      });
+    }
+
+    const now = today.clone();
+    const cutoffTime = today.clone().set({ hour: 9, minute: 0, second: 0 });
+
+    // 9시 이전이면 처리하지 않음
+    if (now.isBefore(cutoffTime)) {
+      return res.status(400).json({
+        success: false,
+        message: "아직 자동 결석 처리 시간이 되지 않았습니다.",
+      });
+    }
+
+    // 오말 체크
     if (today.day() === 0 || today.day() === 6) {
-      // 0: 일요일, 6: 토요일
+      lastAutoAbsentCheck = todayStr;
       return res.json({
         success: true,
         message: "주말은 출석체크를 하지 않습니다.",
@@ -1238,20 +1260,10 @@ app.post("/api/attendance/auto-absent", verifyToken, async (req, res) => {
     // 휴일 체크
     const isHoliday = await Holiday.findOne({ date: todayStr });
     if (isHoliday) {
+      lastAutoAbsentCheck = todayStr;
       return res.json({
         success: true,
         message: `휴일(${isHoliday.reason})은 출석체크를 하지 않습니다.`,
-      });
-    }
-
-    const now = today.clone();
-    const cutoffTime = today.clone().set({ hour: 9, minute: 0, second: 0 });
-
-    // 9시가 지났는지 확인
-    if (now.isBefore(cutoffTime)) {
-      return res.status(400).json({
-        success: false,
-        message: "아직 자동 결석 처리 시간이 되지 않았습니다.",
       });
     }
 
@@ -1282,6 +1294,9 @@ app.post("/api/attendance/auto-absent", verifyToken, async (req, res) => {
     }));
 
     await Attendance.insertMany(attendances);
+
+    // 처리 완료 후 날짜 저장
+    lastAutoAbsentCheck = todayStr;
 
     res.json({
       success: true,
