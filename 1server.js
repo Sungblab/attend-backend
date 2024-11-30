@@ -412,148 +412,122 @@ const AttendanceSchema = new mongoose.Schema({
 
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
-// 출석 상태 결정 함수 개선
+// 출석 상태 결정 함수 수정
 function determineAttendanceStatus(timestamp) {
-  try {
-    const koreanTime = moment.tz(
-      timestamp,
-      "YYYY-MM-DD HH:mm:ss",
-      "Asia/Seoul"
-    );
-    const currentDate = koreanTime.clone().startOf("day");
+  const koreanTime = moment.tz(timestamp, "YYYY-MM-DD HH:mm:ss", "Asia/Seoul");
+  const currentDate = koreanTime.clone().startOf("day");
 
-    const normalTime = currentDate.clone().hour(8).minute(30); // 8:30
-    const lateTime = currentDate.clone().hour(9).minute(0); // 9:00
-    const endTime = currentDate.clone().hour(17).minute(0); // 17:00
+  const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
+  const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:00";
 
-    if (koreanTime.isBefore(normalTime)) {
-      return { status: "early", lateMinutes: 0 };
-    } else if (koreanTime.isSameOrBefore(lateTime)) {
-      return { status: "present", lateMinutes: 0 };
-    } else if (koreanTime.isBefore(endTime)) {
-      const lateMinutes = koreanTime.diff(normalTime, "minutes");
-      return { status: "late", lateMinutes };
-    } else {
-      return { status: "absent", lateMinutes: 0 };
-    }
-  } catch (error) {
-    console.error("출석 상태 결정 중 오류:", error);
-    throw new Error("출석 상태를 결정할 수 없습니다.");
+  const [normalHour, normalMinute] = normalAttendanceTime
+    .split(":")
+    .map(Number);
+  const [lateHour, lateMinute] = lateAttendanceTime.split(":").map(Number);
+
+  const normalTime = currentDate
+    .clone()
+    .add(normalHour, "hours")
+    .add(normalMinute, "minutes");
+  const lateTime = currentDate
+    .clone()
+    .add(lateHour, "hours")
+    .add(lateMinute, "minutes");
+
+  console.log(`Current time: ${koreanTime.format("YYYY-MM-DD HH:mm:ss")}`);
+  console.log(
+    `Normal attendance time: ${normalTime.format("YYYY-MM-DD HH:mm:ss")}`
+  );
+  console.log(
+    `Late attendance time: ${lateTime.format("YYYY-MM-DD HH:mm:ss")}`
+  );
+
+  if (koreanTime.isSameOrBefore(normalTime)) {
+    return { status: "present", lateMinutes: 0 };
+  } else if (koreanTime.isBefore(lateTime)) {
+    const lateMinutes = koreanTime.diff(normalTime, "minutes");
+    return { status: "late", lateMinutes };
+  } else {
+    return { status: "absent", lateMinutes: 0 };
   }
 }
 
-// 출석 처리 API 개선
 app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   try {
     const { encryptedData } = req.body;
-    if (!encryptedData) {
-      return res.status(400).json({ message: "QR 데이터가 없습니다." });
-    }
 
-    // QR 데이터 복호화 및 검증
-    const decryptedData = await decryptQRData(encryptedData);
-    if (!decryptedData) {
-      return res
-        .status(400)
-        .json({ message: "유효하지 않은 QR 데이터입니다." });
-    }
+    // 암호화된 데이터 복호화
+    const [ivHex, encryptedHex] = encryptedData.split(":");
+    const iv = Buffer.from(ivHex, "hex");
+    const encrypted = Buffer.from(encryptedHex, "hex");
+    const decipher = crypto.createDecipheriv(
+      "aes-256-cbc",
+      Buffer.from(process.env.ENCRYPTION_KEY),
+      iv
+    );
+    let decrypted = decipher.update(encrypted);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    const [studentId, timestamp] = decrypted.toString().split("|");
 
-    const { studentId, timestamp } = decryptedData;
+    console.log(`Decrypted timestamp: ${timestamp}`);
 
-    // 사용자 존재 여부 확인
-    const user = await User.findOne({ studentId });
-    if (!user) {
-      return res.status(404).json({ message: "존재하지 않는 사용자입니다." });
-    }
+    // 출석 상태 결정
+    const { status, lateMinutes } = determineAttendanceStatus(timestamp);
 
-    // 중복 출석 체크
-    const today = moment.tz("Asia/Seoul").startOf("day");
+    console.log(`Determined status: ${status}, Late minutes: ${lateMinutes}`);
+
+    // Check for existing attendance on the same day
+    const today = moment
+      .tz(timestamp, "Asia/Seoul")
+      .startOf("day")
+      .format("YYYY-MM-DD");
+    const tomorrow = moment
+      .tz(timestamp, "Asia/Seoul")
+      .add(1, "days")
+      .startOf("day")
+      .format("YYYY-MM-DD");
+
     const existingAttendance = await Attendance.findOne({
       studentId,
       timestamp: {
-        $gte: today.toDate(),
-        $lt: moment(today).add(1, "days").toDate(),
+        $gte: today,
+        $lt: tomorrow,
       },
     });
 
     if (existingAttendance) {
-      return res.status(400).json({
-        message: "이미 오늘 출석이 기록되었습니다.",
-        attendance: existingAttendance,
-      });
+      return res
+        .status(400)
+        .json({ message: "이미 오늘 출석이 기록되었습니다." });
     }
 
-    // 출석 상태 결정 및 기록
-    const { status, lateMinutes } = determineAttendanceStatus(timestamp);
+    // 출석 기록 생성 및 저장
     const attendance = new Attendance({
       studentId,
-      timestamp,
+      timestamp: timestamp,
       status,
       lateMinutes,
     });
 
     await attendance.save();
 
-    // 응답 메시지 생성
-    let message = "";
-    switch (status) {
-      case "early":
-        message = "일찍 출석하셨습니다.";
-        break;
-      case "present":
-        message = "정상 출석되었습니다.";
-        break;
-      case "late":
-        message = `지각입니다. (${lateMinutes}분 지각)`;
-        break;
-      case "absent":
-        message = "결석 처리되었습니다.";
-        break;
+    console.log(`Saved attendance: ${JSON.stringify(attendance)}`);
+
+    let message;
+    if (status === "present") {
+      message = "출석 처리되었습니다.";
+    } else if (status === "late") {
+      message = `지각 처리되었습니다. 지각 시간: ${lateMinutes}분`;
+    } else {
+      message = "결석 처리되었습니다.";
     }
 
-    res.status(201).json({
-      success: true,
-      message,
-      attendance,
-    });
+    res.status(201).json({ message, attendance });
   } catch (error) {
-    console.error("출석 처리 중 오류:", error);
-    res.status(500).json({
-      success: false,
-      message: "출석 처리 중 오류가 발생했습니다.",
-      error: error.message,
-    });
+    console.error("출석 처리 중 오류 발생:", error);
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
-
-// QR 데이터 복호화 함수
-async function decryptQRData(encryptedData) {
-  try {
-    const [ivHex, encryptedHex] = encryptedData.split(":");
-    const iv = Buffer.from(ivHex, "hex");
-    const encrypted = Buffer.from(encryptedHex, "hex");
-
-    const decipher = crypto.createDecipheriv(
-      "aes-256-cbc",
-      Buffer.from(process.env.ENCRYPTION_KEY),
-      iv
-    );
-
-    let decrypted = decipher.update(encrypted);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-
-    const [studentId, timestamp] = decrypted.toString().split("|");
-
-    if (!studentId || !timestamp) {
-      throw new Error("잘못된 QR 데이터 형식");
-    }
-
-    return { studentId, timestamp };
-  } catch (error) {
-    console.error("QR 데이터 복호화 오류:", error);
-    return null;
-  }
-}
 
 app.get("/api/attendance/stats", verifyToken, async (req, res) => {
   try {
@@ -659,18 +633,3 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       .json({ message: "서버 오류가 발생했습니다.", error: error.message });
   }
 });
-
-// 서버 시작 시 필수 환경 변수 검증
-const requiredEnvVars = ["MONGODB_URI", "JWT_SECRET", "ENCRYPTION_KEY"];
-
-requiredEnvVars.forEach((varName) => {
-  if (!process.env[varName]) {
-    console.error(`Error: ${varName} is not set in environment variables`);
-    process.exit(1);
-  }
-});
-
-if (process.env.ENCRYPTION_KEY.length !== 32) {
-  console.error("Error: ENCRYPTION_KEY must be exactly 32 characters long");
-  process.exit(1);
-}
