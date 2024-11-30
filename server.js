@@ -1264,7 +1264,7 @@ app.get("/api/attendance/excused", verifyToken, isAdmin, async (req, res) => {
 });
 
 // 자동 결석 처리 API
-app.post("/api/attendance/auto-absent", authenticateToken, async (req, res) => {
+app.post("/api/attendance/auto-absent", verifyToken, async (req, res) => {
   try {
     const today = moment().format("YYYY-MM-DD");
     const now = moment();
@@ -1279,36 +1279,31 @@ app.post("/api/attendance/auto-absent", authenticateToken, async (req, res) => {
     }
 
     // 오늘 출석하지 않은 학생들 조회
-    const unattendedStudents = await db.query(
-      `SELECT s.student_id 
-       FROM students s 
-       LEFT JOIN attendance a 
-       ON s.student_id = a.student_id 
-       AND DATE(a.timestamp) = ?
-       WHERE a.id IS NULL`,
-      [today]
-    );
+    const unattendedStudents = await User.find({
+      _id: {
+        $nin: await Attendance.distinct("studentId", {
+          timestamp: {
+            $gte: moment(today).startOf("day").format(),
+            $lt: moment(today).endOf("day").format(),
+          },
+        }),
+      },
+    });
 
     if (!unattendedStudents.length) {
       return res.json({ success: true, count: 0 });
     }
 
     // 결석 처리
-    const values = unattendedStudents.map((student) => [
-      student.student_id,
-      today,
-      "absent",
-      null,
-      false,
-      null,
-    ]);
+    const attendances = unattendedStudents.map((student) => ({
+      studentId: student.studentId,
+      timestamp: moment().format(),
+      status: "absent",
+      lateMinutes: 0,
+      isExcused: false,
+    }));
 
-    await db.query(
-      `INSERT INTO attendance 
-       (student_id, date, status, late_minutes, is_excused, reason) 
-       VALUES ?`,
-      [values]
-    );
+    await Attendance.insertMany(attendances);
 
     res.json({
       success: true,
