@@ -12,9 +12,23 @@ const winston = require("winston");
 
 const app = express();
 
+// trust proxy 설정 추가
+app.set("trust proxy", 1);
+
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// rate limiter 설정
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15분
+  max: 100, // IP당 최대 요청 수
+  standardHeaders: true, // 표준 RateLimit 헤더 반환
+  legacyHeaders: false, // X-RateLimit 헤더 비활성화
+});
+
+// rate limiter 적용
+app.use(limiter);
 
 // MongoDB connection
 mongoose
@@ -291,7 +305,7 @@ app.post("/api/change-password", verifyToken, async (req, res) => {
     res.json({ message: "비밀번호가 성공적으로 변경되었습니다." });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "서버 오류가 발했습니다." });
+    res.status(500).json({ message: "서버 오류가 했습니다." });
   }
 });
 
@@ -858,12 +872,6 @@ const validatePassword = (password) => {
   );
 };
 
-// 2. 요청 제한 미웨어 가
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15분
-  max: 100, // IP당 대 요청 수
-});
-
 app.use(limiter);
 
 // 3. 보안 헤더 추가
@@ -931,7 +939,7 @@ app.post("/api/refresh-token", async (req, res) => {
     // 새로운 액세스 토큰 생성
     const accessToken = generateAccessToken(user);
 
-    // 새로운 리프레시 토큰 생성
+    // 새로��� 리프레시 토큰 생성
     const newRefreshToken = generateRefreshToken();
     await RefreshToken.findByIdAndUpdate(refreshTokenDoc._id, {
       token: newRefreshToken,
@@ -1090,7 +1098,7 @@ function calculateImprovement(lastMonth, thisMonth) {
 
   // 가중치 적용
   improvement =
-    attendanceImprovement * 0.4 + // 출석률 개선 40%
+    attendanceImprovement * 0.4 + // 출���률 개선 40%
     lateReduction * 0.2 + // 지각 횟수 감소 20%
     lateMinutesReduction * 0.2 + // 지각 시간 감소 20%
     absentReduction * 0.2; // 결석 감소 20%
@@ -1297,7 +1305,7 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
       });
     }
 
-    // 이미 존재하는 휴일인지 확인
+    // 이미 재하는 휴일인지 확인
     const existingHoliday = await Holiday.findOne({ date });
     if (existingHoliday) {
       return res.status(400).json({
