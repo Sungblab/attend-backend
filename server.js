@@ -44,17 +44,19 @@ const verifyToken = (req, res, next) => {
     const authHeader = req.header("Authorization");
 
     if (!authHeader) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Authorization 헤더가 없습니다." });
+      return res.status(401).json({
+        success: false,
+        message: "Authorization 헤더가 없습니다.",
+      });
     }
 
     const [bearer, token] = authHeader.split(" ");
 
     if (bearer !== "Bearer" || !token) {
-      return res
-        .status(401)
-        .json({ success: false, message: "잘못된 토큰 형식입니다." });
+      return res.status(401).json({
+        success: false,
+        message: "잘못된 토큰 형식입니다.",
+      });
     }
 
     try {
@@ -72,15 +74,17 @@ const verifyToken = (req, res, next) => {
         });
       }
 
-      res
-        .status(401)
-        .json({ success: false, message: "유효하지 않은 토큰입니다." });
+      return res.status(401).json({
+        success: false,
+        message: "유효하지 않은 토큰입니다.",
+      });
     }
   } catch (error) {
     console.error("Token verification error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "서버 오류가 발생했습니다." });
+    return res.status(500).json({
+      success: false,
+      message: "서버 오류가 발생했습니다.",
+    });
   }
 };
 
@@ -185,13 +189,33 @@ app.post("/api/login", async (req, res) => {
       return res.status(400).json({ message: "비밀번호가 일치하지 않습니다." });
     }
 
-    const tokens = await generateTokens(user);
+    // 토큰 생성
+    const accessToken = jwt.sign(
+      {
+        id: user._id,
+        studentId: user.studentId,
+        isAdmin: user.isAdmin,
+        isReader: user.isReader,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
 
-    // 기존 세션 정리
+    // 리프레시 토큰 생성
+    const refreshToken = crypto.randomBytes(40).toString("hex");
+    const refreshTokenDoc = new RefreshToken({
+      userId: user._id,
+      token: refreshToken,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7일
+    });
+
+    // 기존 리프레시 토큰 삭제
     await RefreshToken.deleteMany({ userId: user._id });
+    await refreshTokenDoc.save();
 
     res.json({
-      ...tokens,
+      accessToken,
+      refreshToken,
       user: {
         id: user._id,
         studentId: user.studentId,
@@ -721,40 +745,7 @@ const RefreshTokenSchema = new mongoose.Schema({
 
 const RefreshToken = mongoose.model("RefreshToken", RefreshTokenSchema);
 
-// 토큰 생성 함수
-const generateTokens = async (user) => {
-  try {
-    const accessToken = jwt.sign(
-      {
-        id: user._id,
-        studentId: user.studentId,
-        isAdmin: user.isAdmin,
-        isReader: user.isReader,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
-
-    const refreshToken = crypto.randomBytes(40).toString("hex");
-
-    // 기존 리프레시 토큰 삭제
-    await RefreshToken.deleteMany({ userId: user._id });
-
-    const refreshTokenDoc = new RefreshToken({
-      userId: user._id,
-      token: refreshToken,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7일
-    });
-    await refreshTokenDoc.save();
-
-    return { accessToken, refreshToken };
-  } catch (error) {
-    console.error("Token generation error:", error);
-    throw new Error("토큰 생성 중 오류가 발생했습니다.");
-  }
-};
-
-// 리프레시 토큰 엔드포인트
+// 리프레시 토큰 엔드포인트 수정
 app.post("/api/refresh-token", async (req, res) => {
   try {
     const { refreshToken } = req.body;
@@ -770,7 +761,7 @@ app.post("/api/refresh-token", async (req, res) => {
 
     if (!refreshTokenDoc) {
       return res.status(401).json({
-        message: "유효하지 않은 리프레시 토큰입니다.",
+        message: "유효하지 않거나 만료된 리프레시 토큰입니다.",
         needRelogin: true,
       });
     }
@@ -784,14 +775,28 @@ app.post("/api/refresh-token", async (req, res) => {
       });
     }
 
-    // 새로운 토큰 쌍 생성
-    const tokens = await generateTokens(user);
+    // 새로운 액세스 토큰 생성
+    const accessToken = jwt.sign(
+      {
+        id: user._id,
+        studentId: user.studentId,
+        isAdmin: user.isAdmin,
+        isReader: user.isReader,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
 
-    // 이전 리프레시 토큰 삭제
-    await RefreshToken.deleteOne({ _id: refreshTokenDoc._id });
+    // 새로운 리프레시 토큰 생성
+    const newRefreshToken = crypto.randomBytes(40).toString("hex");
+    await RefreshToken.findByIdAndUpdate(refreshTokenDoc._id, {
+      token: newRefreshToken,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
 
     res.json({
-      ...tokens,
+      accessToken,
+      refreshToken: newRefreshToken,
       user: {
         id: user._id,
         studentId: user.studentId,
@@ -802,10 +807,7 @@ app.post("/api/refresh-token", async (req, res) => {
     });
   } catch (error) {
     console.error("Refresh token error:", error);
-    res.status(500).json({
-      message: "서버 오류가 발생했습니다.",
-      error: error.message,
-    });
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
 
