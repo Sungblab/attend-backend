@@ -637,7 +637,7 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
       };
     }
 
-    // 학생 필터링
+    // 생 필터링
     let userMatchCondition = {};
     if (grade) userMatchCondition.grade = parseInt(grade);
     if (classNum) userMatchCondition.class = parseInt(classNum);
@@ -1226,93 +1226,110 @@ app.get("/api/attendance/excused", verifyToken, isAdmin, async (req, res) => {
 let lastAutoAbsentCheck = null;
 
 // 자동 결석 처리 API 수정
-app.post("/api/attendance/auto-absent", verifyToken, async (req, res) => {
-  try {
-    const today = moment().tz("Asia/Seoul");
-    const todayStr = today.format("YYYY-MM-DD");
+app.post(
+  "/api/attendance/auto-absent",
+  verifyToken,
+  isAdmin,
+  async (req, res) => {
+    try {
+      const today = moment().tz("Asia/Seoul");
+      const todayStr = today.format("YYYY-MM-DD");
 
-    // 주늘 이미 체크했는지 확인
-    if (lastAutoAbsentCheck && lastAutoAbsentCheck === todayStr) {
-      return res.json({
-        success: true,
-        message: "오늘은 이미 자동 결석 처리가 완료되었습니다.",
+      // 이미 처리됐는지 확인
+      const processedLog = await AutoAbsentLog.findOne({ date: todayStr });
+      if (processedLog) {
+        return res.json({
+          success: true,
+          message: "오늘은 이미 자동 결석 처리가 완료되었습니다.",
+        });
+      }
+
+      // 주말 체크
+      if (today.day() === 0 || today.day() === 6) {
+        await AutoAbsentLog.create({
+          date: todayStr,
+          skipped: true,
+          reason: "주말",
+        });
+        return res.json({
+          success: true,
+          message: "주말은 출석체크를 하지 않습니다.",
+        });
+      }
+
+      // 휴일 체크
+      const holiday = await Holiday.findOne({ date: todayStr });
+      if (holiday) {
+        await AutoAbsentLog.create({
+          date: todayStr,
+          skipped: true,
+          reason: `휴일(${holiday.reason})`,
+        });
+        return res.json({
+          success: true,
+          message: `휴일(${holiday.reason})은 출석체크를 하지 않습니다.`,
+        });
+      }
+
+      // 오늘 출석하지 않은 학생들 조회 (수정된 부분)
+      const attendedStudentIds = await Attendance.distinct("studentId", {
+        timestamp: {
+          $gte: moment(today).startOf("day").format(),
+          $lt: moment(today).endOf("day").format(),
+        },
       });
-    }
 
-    const now = today.clone();
-    const cutoffTime = today.clone().set({ hour: 9, minute: 0, second: 0 });
+      const unattendedStudents = await User.find({
+        studentId: { $nin: attendedStudentIds },
+        isApproved: true, // 승인된 학생만 대상으로
+      });
 
-    // 9시 이전이면 처리하지 않음
-    if (now.isBefore(cutoffTime)) {
-      return res.status(400).json({
+      if (!unattendedStudents.length) {
+        return res.json({ success: true, count: 0 });
+      }
+
+      // 결석 처리
+      const attendances = unattendedStudents.map((student) => ({
+        studentId: student.studentId,
+        timestamp: moment().format(),
+        status: "absent",
+        lateMinutes: 0,
+        isExcused: false,
+      }));
+
+      await Attendance.insertMany(attendances);
+
+      // 처리 완료 로그 저장
+      await AutoAbsentLog.create({
+        date: todayStr,
+        processedCount: unattendedStudents.length,
+      });
+
+      res.json({
+        success: true,
+        count: unattendedStudents.length,
+        message: `${unattendedStudents.length}명의 학생이 결석 처리되었습니다.`,
+      });
+    } catch (error) {
+      console.error("자동 결석 처리 중 오류:", error);
+      res.status(500).json({
         success: false,
-        message: "아직 자동 결석 처리 시간이 되지 않았습니다.",
+        message: "자동 결석 처리 중 오류가 발생했습니다.",
       });
     }
-
-    // 오말 체크
-    if (today.day() === 0 || today.day() === 6) {
-      lastAutoAbsentCheck = todayStr;
-      return res.json({
-        success: true,
-        message: "주말은 출석체크를 하지 않습니다.",
-      });
-    }
-
-    // 휴일 체크
-    const isHoliday = await Holiday.findOne({ date: todayStr });
-    if (isHoliday) {
-      lastAutoAbsentCheck = todayStr;
-      return res.json({
-        success: true,
-        message: `휴일(${isHoliday.reason})은 출석체크를 하지 않습니다.`,
-      });
-    }
-
-    // 오늘 출석하지 않은 학생들 조회 (수정된 부분)
-    const attendedStudentIds = await Attendance.distinct("studentId", {
-      timestamp: {
-        $gte: moment(today).startOf("day").format(),
-        $lt: moment(today).endOf("day").format(),
-      },
-    });
-
-    const unattendedStudents = await User.find({
-      studentId: { $nin: attendedStudentIds },
-      isApproved: true, // 승인된 학생만 대상으로
-    });
-
-    if (!unattendedStudents.length) {
-      return res.json({ success: true, count: 0 });
-    }
-
-    // 결석 처리
-    const attendances = unattendedStudents.map((student) => ({
-      studentId: student.studentId,
-      timestamp: moment().format(),
-      status: "absent",
-      lateMinutes: 0,
-      isExcused: false,
-    }));
-
-    await Attendance.insertMany(attendances);
-
-    // 처리 완료 후 날짜 저장
-    lastAutoAbsentCheck = todayStr;
-
-    res.json({
-      success: true,
-      count: unattendedStudents.length,
-      message: `${unattendedStudents.length}명의 학생이 결석 처리되었습니다.`,
-    });
-  } catch (error) {
-    console.error("자동 결석 처리 중 오류:", error);
-    res.status(500).json({
-      success: false,
-      message: "자동 결석 처리 중 오류가 발생했습니다.",
-    });
   }
+);
+
+// 자동 결석 처리 로그 스키마 추가
+const AutoAbsentLogSchema = new mongoose.Schema({
+  date: { type: String, required: true, unique: true },
+  processedCount: { type: Number, default: 0 },
+  skipped: { type: Boolean, default: false },
+  reason: String,
+  createdAt: { type: Date, default: Date.now },
 });
+
+const AutoAbsentLog = mongoose.model("AutoAbsentLog", AutoAbsentLogSchema);
 
 // 오늘이 휴일인지 확인하는 API
 app.get("/api/holidays/today", verifyToken, async (req, res) => {
@@ -1400,7 +1417,7 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// 휴일 조회 API
+// 휴일 조회 API 수정
 app.get("/api/holidays", verifyToken, async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -1413,10 +1430,16 @@ app.get("/api/holidays", verifyToken, async (req, res) => {
       };
     }
 
-    const holidays = await Holiday.find(query).sort({ date: 1 });
+    const holidays = await Holiday.find(query)
+      .sort({ date: 1 })
+      .populate("createdBy", "name"); // 생성자 정보 포함
+
     res.json({
       success: true,
-      holidays,
+      holidays: holidays.map((h) => ({
+        ...h.toObject(),
+        createdBy: h.createdBy?.name || "관리자",
+      })),
     });
   } catch (error) {
     console.error("휴일 조회 중 오류:", error);
@@ -1425,4 +1448,24 @@ app.get("/api/holidays", verifyToken, async (req, res) => {
       message: "휴일 조회 중 오류가 발생했습니다.",
     });
   }
+});
+
+// 전역 에러 핸들러 추가
+app.use((err, req, res, next) => {
+  console.error("서버 오류:", err);
+  res.status(500).json({
+    success: false,
+    message:
+      process.env.NODE_ENV === "production"
+        ? "서버 오류가 발생했습니다."
+        : err.message,
+  });
+});
+
+// 404 처리
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "요청한 리소스를 찾을 수 없습니다.",
+  });
 });
