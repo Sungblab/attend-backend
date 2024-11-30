@@ -771,8 +771,9 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
 
 // 월간 랭킹 계산 함수 추가
 async function calculateMonthlyRankings(students, type, limit = 3) {
+  // 이번 달의 시작과 끝
   const thisMonth = moment().tz("Asia/Seoul").startOf("month");
-  const today = moment().tz("Asia/Seoul").endOf("day");
+  const nextMonth = moment().tz("Asia/Seoul").endOf("month");
 
   const rankings = await Promise.all(
     students.map(async (student) => {
@@ -780,7 +781,7 @@ async function calculateMonthlyRankings(students, type, limit = 3) {
         studentId: student.studentId,
         timestamp: {
           $gte: thisMonth.format(),
-          $lte: today.format(),
+          $lte: nextMonth.format(),
         },
       });
 
@@ -788,32 +789,44 @@ async function calculateMonthlyRankings(students, type, limit = 3) {
       const presentCount = attendances.filter(
         (a) => a.status === "present"
       ).length;
-      // 지각 횟수와 시간 계산
       const lateCount = attendances.filter((a) => a.status === "late").length;
       const totalLateMinutes = attendances.reduce(
         (sum, a) => sum + (a.lateMinutes || 0),
         0
       );
-      // 결석 횟수 계산
-      const absentCount = attendances.filter(
-        (a) => a.status === "absent" && !a.isExcused
-      ).length;
-      // 인정결석 횟수 계산
-      const excusedCount = attendances.filter((a) => a.isExcused).length;
+
+      // 개선도 계산
+      const lastMonth = moment().subtract(1, "month");
+      const lastMonthAttendances = await Attendance.find({
+        studentId: student.studentId,
+        timestamp: {
+          $gte: lastMonth.startOf("month").format(),
+          $lte: lastMonth.endOf("month").format(),
+        },
+      });
+
+      const improvement = calculateImprovement(
+        {
+          present: lastMonthAttendances.filter((a) => a.status === "present")
+            .length,
+          late: lastMonthAttendances.filter((a) => a.status === "late").length,
+          total: lastMonthAttendances.length,
+        },
+        {
+          present: presentCount,
+          late: lateCount,
+          total: attendances.length,
+        }
+      );
 
       return {
         studentId: student.studentId,
         name: student.name,
         grade: student.grade,
         class: student.class,
-        number: student.number,
-        presentCount,
-        lateCount,
-        absentCount,
-        excusedCount,
-        totalLateMinutes,
         count: type === "present" ? presentCount : lateCount,
-        minutes: totalLateMinutes,
+        lateMinutes: totalLateMinutes,
+        improvement,
       };
     })
   );
@@ -821,11 +834,9 @@ async function calculateMonthlyRankings(students, type, limit = 3) {
   // 정렬 및 상위 N개 반환
   return rankings
     .sort((a, b) => {
-      if (type === "present") {
-        return b.count - a.count;
-      }
-      // 지각의 경우 지각 횟수가 적은 순
-      return a.count - b.count || a.minutes - b.minutes;
+      if (type === "present") return b.count - a.count;
+      if (type === "improvement") return b.improvement - a.improvement;
+      return a.count - b.count || a.lateMinutes - b.lateMinutes;
     })
     .slice(0, limit);
 }
@@ -1225,6 +1236,95 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
       success: false,
       message: "통계 조회 중 오류가 발생했습니다.",
       error: error.message,
+    });
+  }
+});
+
+// 인정결석 목록 조회 API 추가
+app.get("/api/attendance/excused", verifyToken, async (req, res) => {
+  try {
+    const excusedAttendances = await Attendance.find({
+      isExcused: true,
+    })
+      .sort({ timestamp: -1 })
+      .limit(20); // 최근 20개만 조회
+
+    // 학생 정보 조회를 위한 Promise.all 사용
+    const excusedWithStudentInfo = await Promise.all(
+      excusedAttendances.map(async (attendance) => {
+        const student = await User.findOne({ studentId: attendance.studentId });
+        return {
+          studentId: attendance.studentId,
+          studentName: student ? student.name : "알 수 없음",
+          date: attendance.timestamp,
+          reason: attendance.reason,
+          excusedAt: attendance.excusedAt,
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      excused: excusedWithStudentInfo,
+    });
+  } catch (error) {
+    console.error("인정결석 목록 조회 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "인정결석 목록 조회 중 오류가 발생했습니다.",
+    });
+  }
+});
+
+// 휴일 관리를 위한 스키마 추가
+const HolidaySchema = new mongoose.Schema({
+  date: { type: Date, required: true, unique: true },
+  reason: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now },
+});
+
+const Holiday = mongoose.model("Holiday", HolidaySchema);
+
+// 휴일 등록 API
+app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const { date, reason } = req.body;
+
+    const holiday = new Holiday({
+      date: moment.tz(date, "Asia/Seoul").startOf("day"),
+      reason,
+    });
+
+    await holiday.save();
+
+    res.json({
+      success: true,
+      message: "휴일이 등록되었습니다.",
+      holiday,
+    });
+  } catch (error) {
+    console.error("휴일 등록 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "휴일 등록 중 오류가 발생했습니다.",
+    });
+  }
+});
+
+// 휴일 목록 조회 API
+app.get("/api/holidays", verifyToken, async (req, res) => {
+  try {
+    const holidays = await Holiday.find().sort({ date: -1 }).limit(20);
+
+    res.json({
+      success: true,
+      holidays,
+    });
+  } catch (error) {
+    console.error("휴일 목록 조회 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "휴일 목록 조회 중 오류가 발생했습니다.",
     });
   }
 });
