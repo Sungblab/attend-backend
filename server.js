@@ -12,6 +12,9 @@ const winston = require("winston");
 
 const app = express();
 
+// Middleware 섹션 바로 위에 추가
+app.set("trust proxy", 1); // 프록시 서버 신뢰 설정
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -96,7 +99,7 @@ const verifyToken = (req, res, next) => {
         if (err.name === "TokenExpiredError") {
           return res.status(401).json({
             success: false,
-            message: "토큰이 만료되었습니다.",
+            message: "토��이 만료되었습니다.",
             needRefresh: true,
           });
         }
@@ -329,7 +332,7 @@ app.post("/api/admin/approve-user", verifyToken, isAdmin, async (req, res) => {
     res.json({ message: "사용자 승인 상태가 업데이트되었습니다." });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    res.status(500).json({ message: "서버 오��가 발생했습니다." });
   }
 });
 
