@@ -88,7 +88,8 @@ const verifyToken = (req, res, next) => {
       });
     }
 
-    jwt.verify(token.trim(), process.env.JWT_SECRET, (err, decoded) => {
+    const cleanToken = token.trim();
+    jwt.verify(cleanToken, process.env.JWT_SECRET, (err, decoded) => {
       if (err) {
         console.error("Token verification error:", err);
 
@@ -207,18 +208,25 @@ app.post("/api/login", async (req, res) => {
 
     const user = await User.findOne({ studentId });
     if (!user) {
-      return res.status(400).json({ message: "존재하지 않는 학번입니다." });
+      return res.status(400).json({
+        success: false,
+        message: "존재하지 않는 학번입니다.",
+      });
     }
 
     if (!user.isApproved) {
-      return res
-        .status(400)
-        .json({ message: "관리자의 승인을 기다리고 있습니다." });
+      return res.status(400).json({
+        success: false,
+        message: "관리자의 승인을 기다리고 있습니다.",
+      });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(400).json({ message: "비밀번호가 일치하지 않습니다." });
+      return res.status(400).json({
+        success: false,
+        message: "비밀번호가 일치하지 않습니다.",
+      });
     }
 
     // 액세스 토큰 생성
@@ -250,7 +258,10 @@ app.post("/api/login", async (req, res) => {
     });
   } catch (error) {
     console.error("Login error:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    res.status(500).json({
+      success: false,
+      message: "서버 오류가 발생했습니다.",
+    });
   }
 });
 
@@ -279,7 +290,7 @@ app.post("/api/change-password", verifyToken, async (req, res) => {
     res.json({ message: "비밀번호가 성공적으로 변경되었습니다." });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    res.status(500).json({ message: "서버 오류가 발���했습니다." });
   }
 });
 
@@ -493,7 +504,7 @@ const AttendanceSchema = new mongoose.Schema({
 
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
-// 출석 상태 결정 함수 수정
+// 출석 상태 결정 함��� 수정
 function determineAttendanceStatus(timestamp) {
   const koreanTime = moment.tz(timestamp, "YYYY-MM-DD HH:mm:ss", "Asia/Seoul");
   const currentDate = koreanTime.clone().startOf("day");
@@ -606,7 +617,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     res.status(201).json({ message, attendance });
   } catch (error) {
     console.error("출석 처리 중 오류 발생:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    res.status(500).json({ message: "서버 ��류가 발생했습니다." });
   }
 });
 
