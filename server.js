@@ -1262,3 +1262,64 @@ app.get("/api/attendance/excused", verifyToken, isAdmin, async (req, res) => {
     });
   }
 });
+
+// 자동 결석 처리 API
+app.post("/api/attendance/auto-absent", authenticateToken, async (req, res) => {
+  try {
+    const today = moment().format("YYYY-MM-DD");
+    const now = moment();
+    const cutoffTime = moment().set({ hour: 9, minute: 0, second: 0 });
+
+    // 9시가 지났는지 확인
+    if (now.isBefore(cutoffTime)) {
+      return res.status(400).json({
+        success: false,
+        message: "아직 자동 결석 처리 시간이 되지 않았습니다.",
+      });
+    }
+
+    // 오늘 출석하지 않은 학생들 조회
+    const unattendedStudents = await db.query(
+      `SELECT s.student_id 
+       FROM students s 
+       LEFT JOIN attendance a 
+       ON s.student_id = a.student_id 
+       AND DATE(a.timestamp) = ?
+       WHERE a.id IS NULL`,
+      [today]
+    );
+
+    if (!unattendedStudents.length) {
+      return res.json({ success: true, count: 0 });
+    }
+
+    // 결석 처리
+    const values = unattendedStudents.map((student) => [
+      student.student_id,
+      today,
+      "absent",
+      null,
+      false,
+      null,
+    ]);
+
+    await db.query(
+      `INSERT INTO attendance 
+       (student_id, date, status, late_minutes, is_excused, reason) 
+       VALUES ?`,
+      [values]
+    );
+
+    res.json({
+      success: true,
+      count: unattendedStudents.length,
+      message: `${unattendedStudents.length}명의 학생이 결석 처리되었습니다.`,
+    });
+  } catch (error) {
+    console.error("자동 결석 처리 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "자동 결석 처리 중 오류가 발생했습니다.",
+    });
+  }
+});
