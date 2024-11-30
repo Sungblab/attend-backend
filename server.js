@@ -65,9 +65,9 @@ const generateRefreshToken = () => {
   return crypto.randomBytes(40).toString("hex");
 };
 
-// 리프레시 토큰 만료 시간 설정
+// 리프레시 토큰 만료 시간 설정 수정
 const REFRESH_TOKEN_EXPIRES_IN =
-  process.env.REFRESH_TOKEN_EXPIRES_IN || 7 * 24 * 60 * 60 * 1000; // 기본값 7일
+  parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN) || 7 * 24 * 60 * 60 * 1000;
 
 // 토큰 검증 미들웨어 수정
 const verifyToken = (req, res, next) => {
@@ -762,7 +762,16 @@ const logger = winston.createLogger({
 const RefreshTokenSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   token: { type: String, required: true },
-  expiresAt: { type: Date, required: true },
+  expiresAt: {
+    type: Date,
+    required: true,
+    validate: {
+      validator: function (v) {
+        return v instanceof Date && !isNaN(v);
+      },
+      message: "유효한 날짜가 아닙니다.",
+    },
+  },
 });
 
 const RefreshToken = mongoose.model("RefreshToken", RefreshTokenSchema);
