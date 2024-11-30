@@ -652,7 +652,7 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
       number: 1,
     });
 
-    // 월간 랭킹 계산
+    // 월간 랭��� 계산
     const monthlyRankings = {
       attendance: await calculateMonthlyRankings(students, "present", 3),
       lateKings: await calculateMonthlyRankings(students, "late", 3),
@@ -1087,11 +1087,10 @@ function calculateImprovement(lastMonth, thisMonth) {
   return parseFloat(improvement.toFixed(1));
 }
 
-// 학생별 상세 통계 API
+// 학생별 상세 통계 API 수정
 app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
   try {
     const { studentId } = req.params;
-    const { startDate, endDate } = req.query;
 
     // 권한 확인 (관리자이거나 본인 정보만 조회 가능)
     const requestUser = await User.findById(req.user.id);
@@ -1111,39 +1110,30 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
       });
     }
 
-    // 기간 설정
-    const start = startDate
-      ? moment.tz(startDate, "Asia/Seoul").startOf("day")
-      : moment().tz("Asia/Seoul").subtract(6, "months").startOf("month");
-    const end = endDate
-      ? moment.tz(endDate, "Asia/Seoul").endOf("day")
-      : moment().tz("Asia/Seoul").endOf("day");
+    // 오늘의 출석 상태 조회
+    const today = moment().tz("Asia/Seoul").startOf("day");
+    const todayAttendance = await Attendance.findOne({
+      studentId,
+      timestamp: {
+        $gte: today.format(),
+        $lt: moment(today).add(1, "day").format(),
+      },
+    });
 
-    // 출석 기록 조회
+    // 전체 출석 기록 조회 (최근 30일)
+    const thirtyDaysAgo = moment()
+      .tz("Asia/Seoul")
+      .subtract(30, "days")
+      .startOf("day");
     const attendances = await Attendance.find({
       studentId,
       timestamp: {
-        $gte: start.format(),
-        $lte: end.format(),
+        $gte: thirtyDaysAgo.format(),
+        $lt: moment().tz("Asia/Seoul").endOf("day").format(),
       },
-    }).sort({ timestamp: 1 });
+    }).sort({ timestamp: -1 });
 
-    // 월별 통계 계산
-    const monthlyStats = {};
-    const months = [];
-    let currentMonth = start.clone();
-
-    while (currentMonth.isSameOrBefore(end, "month")) {
-      const monthKey = currentMonth.format("YYYY-MM");
-      months.push(monthKey);
-      monthlyStats[monthKey] = await calculateMonthStats(
-        studentId,
-        currentMonth
-      );
-      currentMonth.add(1, "month");
-    }
-
-    // 전체 기간 통계
+    // 통계 계산
     const totalStats = {
       total: attendances.length,
       present: attendances.filter((a) => a.status === "present").length,
@@ -1155,37 +1145,7 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
         (sum, a) => sum + (a.lateMinutes || 0),
         0
       ),
-      attendanceRate:
-        attendances.length > 0
-          ? (
-              (attendances.filter((a) => a.status === "present" || a.isExcused)
-                .length /
-                attendances.length) *
-              100
-            ).toFixed(1)
-          : 0,
     };
-
-    // 개선도 계산
-    const improvements = [];
-    for (let i = 1; i < months.length; i++) {
-      const lastMonth = monthlyStats[months[i - 1]];
-      const thisMonth = monthlyStats[months[i]];
-      improvements.push({
-        month: months[i],
-        improvement: calculateImprovement(lastMonth, thisMonth),
-      });
-    }
-
-    // 오늘의 출석 상태
-    const today = moment().tz("Asia/Seoul").startOf("day");
-    const todayAttendance = await Attendance.findOne({
-      studentId,
-      timestamp: {
-        $gte: today.format(),
-        $lt: moment(today).add(1, "day").format(),
-      },
-    });
 
     res.json({
       success: true,
@@ -1196,21 +1156,15 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
         class: student.class,
         number: student.number,
       },
-      period: {
-        start: start.format("YYYY-MM-DD"),
-        end: end.format("YYYY-MM-DD"),
-      },
-      totalStats,
-      monthlyStats,
-      improvements,
       todayStatus: todayAttendance
         ? {
             status: todayAttendance.status,
             isExcused: todayAttendance.isExcused,
             lateMinutes: todayAttendance.lateMinutes,
-            timestamp: todayAttendance.timestamp,
+            reason: todayAttendance.reason,
           }
         : null,
+      totalStats,
       attendances: attendances.map((a) => ({
         date: moment(a.timestamp).format("YYYY-MM-DD"),
         status: a.status,
@@ -1266,12 +1220,32 @@ app.get("/api/attendance/excused", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// 자동 결석 처리 API
+// 자동 결석 처리 API 수정
 app.post("/api/attendance/auto-absent", verifyToken, async (req, res) => {
   try {
-    const today = moment().format("YYYY-MM-DD");
-    const now = moment();
-    const cutoffTime = moment().set({ hour: 9, minute: 0, second: 0 });
+    const today = moment().tz("Asia/Seoul");
+    const todayStr = today.format("YYYY-MM-DD");
+
+    // 주말 체크
+    if (today.day() === 0 || today.day() === 6) {
+      // 0: 일요일, 6: 토요일
+      return res.json({
+        success: true,
+        message: "주말은 출석체크를 하지 않습니다.",
+      });
+    }
+
+    // 휴일 체크
+    const isHoliday = await Holiday.findOne({ date: todayStr });
+    if (isHoliday) {
+      return res.json({
+        success: true,
+        message: `휴일(${isHoliday.reason})은 출석체크를 하지 않습니다.`,
+      });
+    }
+
+    const now = today.clone();
+    const cutoffTime = today.clone().set({ hour: 9, minute: 0, second: 0 });
 
     // 9시가 지났는지 확인
     if (now.isBefore(cutoffTime)) {
@@ -1319,6 +1293,119 @@ app.post("/api/attendance/auto-absent", verifyToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "자동 결석 처리 중 오류가 발생했습니다.",
+    });
+  }
+});
+
+// 오늘이 휴일인지 확인하는 API
+app.get("/api/holidays/today", verifyToken, async (req, res) => {
+  try {
+    const today = moment().tz("Asia/Seoul");
+    const todayStr = today.format("YYYY-MM-DD");
+
+    // 주말 체크
+    if (today.day() === 0 || today.day() === 6) {
+      return res.json({
+        success: true,
+        isHoliday: true,
+        reason: "주말",
+      });
+    }
+
+    // 휴일 체크
+    const holiday = await Holiday.findOne({ date: todayStr });
+
+    res.json({
+      success: true,
+      isHoliday: !!holiday,
+      reason: holiday ? holiday.reason : null,
+    });
+  } catch (error) {
+    console.error("휴일 확인 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "휴일 확인 중 오류가 발생했습니다.",
+    });
+  }
+});
+
+// Holiday 모델 추가
+const HolidaySchema = new mongoose.Schema({
+  date: { type: String, required: true, unique: true }, // YYYY-MM-DD 형식
+  reason: { type: String, required: true },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  createdAt: { type: Date, default: Date.now },
+});
+
+const Holiday = mongoose.model("Holiday", HolidaySchema);
+
+// 휴일 등록 API
+app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const { date, reason } = req.body;
+
+    // 날짜 형식 검증
+    if (!moment(date, "YYYY-MM-DD", true).isValid()) {
+      return res.status(400).json({
+        success: false,
+        message: "올바른 날짜 형식이 아닙니다.",
+      });
+    }
+
+    // 이미 등록된 휴일인지 확인
+    const existingHoliday = await Holiday.findOne({ date });
+    if (existingHoliday) {
+      return res.status(400).json({
+        success: false,
+        message: "이미 등록된 휴일입니다.",
+      });
+    }
+
+    const holiday = new Holiday({
+      date,
+      reason,
+      createdBy: req.user.id,
+    });
+
+    await holiday.save();
+
+    res.json({
+      success: true,
+      message: "휴일이 등록되었습니다.",
+      holiday,
+    });
+  } catch (error) {
+    console.error("휴일 등록 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "휴일 등록 중 오류가 발생했습니다.",
+    });
+  }
+});
+
+// 휴일 조회 API
+app.get("/api/holidays", verifyToken, async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    let query = {};
+
+    if (startDate && endDate) {
+      query.date = {
+        $gte: startDate,
+        $lte: endDate,
+      };
+    }
+
+    const holidays = await Holiday.find(query).sort({ date: 1 });
+    res.json({
+      success: true,
+      holidays,
+    });
+  } catch (error) {
+    console.error("휴일 조회 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "휴일 조회 중 오류가 발생했습니다.",
     });
   }
 });
