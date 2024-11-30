@@ -816,7 +816,7 @@ const validatePassword = (password) => {
 // 2. 요청 제한 미웨어 추가
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15분
-  max: 100, // IP당 최대 요청 수
+  max: 100, // IP당 ��대 요청 수
 });
 
 app.use(limiter);
@@ -911,10 +911,17 @@ app.post("/api/refresh-token", async (req, res) => {
   }
 });
 
-// 인정결석 처리 API 수정
+// 인정결석 처리 API
 app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
   try {
     const { studentId, date, reason } = req.body;
+
+    if (!studentId || !date || !reason) {
+      return res.status(400).json({
+        success: false,
+        message: "학번, 날짜, 사유가 모두 필요합니다.",
+      });
+    }
 
     // 해당 날짜의 출석 기록 찾기
     const attendance = await Attendance.findOne({
@@ -930,11 +937,14 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
       const newAttendance = new Attendance({
         studentId,
         timestamp: moment.tz(date, "Asia/Seoul").format(),
-        status: "absent", // 기본값은 결석
+        status: "absent",
         isExcused: true,
         reason,
+        excusedAt: new Date(),
+        excusedBy: req.user.id,
       });
       await newAttendance.save();
+
       return res.json({
         success: true,
         message: "인정결석이 새로 등록되었습니다.",
@@ -943,10 +953,12 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
     }
 
     // 기존 출석 기록을 인정결석으로 변경
-    attendance.status = "absent"; // 상태를 결석으로 변경
+    attendance.status = "absent";
     attendance.isExcused = true;
     attendance.reason = reason;
-    attendance.lateMinutes = 0; // 지각 시간 초기화
+    attendance.lateMinutes = 0;
+    attendance.excusedAt = new Date();
+    attendance.excusedBy = req.user.id;
 
     await attendance.save();
 
