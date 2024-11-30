@@ -81,14 +81,14 @@ const verifyToken = (req, res, next) => {
     }
 
     const [bearer, token] = authHeader.split(" ");
-    if (bearer !== "Bearer" || !token) {
+    if (bearer !== "Bearer" || !token || token.trim() === "") {
       return res.status(401).json({
         success: false,
         message: "잘못된 토큰 형식입니다.",
       });
     }
 
-    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    jwt.verify(token.trim(), process.env.JWT_SECRET, (err, decoded) => {
       if (err) {
         console.error("Token verification error:", err);
 
@@ -103,6 +103,7 @@ const verifyToken = (req, res, next) => {
         return res.status(401).json({
           success: false,
           message: "유효하지 않은 토큰입니다.",
+          error: err.message,
         });
       }
 
@@ -114,6 +115,7 @@ const verifyToken = (req, res, next) => {
     return res.status(500).json({
       success: false,
       message: "서버 오류가 발생했습니다.",
+      error: error.message,
     });
   }
 };
