@@ -244,6 +244,7 @@ app.post("/api/login", async (req, res) => {
     await RefreshToken.deleteMany({ userId: user._id });
     await refreshTokenDoc.save();
 
+    // 응답에 토큰과 사용자 정보 포함
     res.json({
       success: true,
       accessToken,
@@ -290,7 +291,7 @@ app.post("/api/change-password", verifyToken, async (req, res) => {
     res.json({ message: "비밀번호가 성공적으로 변경되었습니다." });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "서버 오류가 발���했습니다." });
+    res.status(500).json({ message: "서버 오류가 발했습니다." });
   }
 });
 
@@ -455,7 +456,7 @@ app.post("/api/generate-qr", verifyToken, async (req, res) => {
       !process.env.ENCRYPTION_KEY ||
       process.env.ENCRYPTION_KEY.length !== 32
     ) {
-      throw new Error("유효하지 않은 암호화 키");
+      throw new Error("유효하지 않�� 암호화 키");
     }
 
     const iv = crypto.randomBytes(16);
@@ -504,7 +505,7 @@ const AttendanceSchema = new mongoose.Schema({
 
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
-// 출석 상태 결정 함��� 수정
+// 출석 상태 결정 함수 수정
 function determineAttendanceStatus(timestamp) {
   const koreanTime = moment.tz(timestamp, "YYYY-MM-DD HH:mm:ss", "Asia/Seoul");
   const currentDate = koreanTime.clone().startOf("day");
@@ -617,7 +618,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     res.status(201).json({ message, attendance });
   } catch (error) {
     console.error("출석 처리 중 오류 발생:", error);
-    res.status(500).json({ message: "서버 ��류가 발생했습니다." });
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
 
