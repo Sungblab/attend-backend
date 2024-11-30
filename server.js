@@ -1278,7 +1278,7 @@ app.get("/api/attendance/excused", verifyToken, async (req, res) => {
 
 // 휴일 관리를 위한 스키마 수정
 const HolidaySchema = new mongoose.Schema({
-  date: { type: String, required: true, unique: true }, // Date 타입 대신 String으로 변경
+  date: { type: String, required: true, unique: true },
   reason: { type: String, required: true },
   createdAt: { type: Date, default: Date.now },
 });
@@ -1289,6 +1289,13 @@ const Holiday = mongoose.model("Holiday", HolidaySchema);
 app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
   try {
     const { date, reason } = req.body;
+
+    if (!date || !reason) {
+      return res.status(400).json({
+        success: false,
+        message: "날짜와 사유를 모두 입력해주세요.",
+      });
+    }
 
     // 이미 존재하는 휴일인지 확인
     const existingHoliday = await Holiday.findOne({ date });
@@ -1306,10 +1313,13 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
 
     await holiday.save();
 
+    // 저장된 휴일 목록을 다시 조회하여 반환
+    const holidays = await Holiday.find().sort({ date: -1 }).limit(20);
+
     res.json({
       success: true,
       message: "휴일이 등록되었습니다.",
-      holiday,
+      holidays,
     });
   } catch (error) {
     console.error("휴일 등록 중 오류:", error);
@@ -1320,10 +1330,17 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// 휴일 목록 조회 API
+// 휴일 목록 조회 API 수정
 app.get("/api/holidays", verifyToken, async (req, res) => {
   try {
     const holidays = await Holiday.find().sort({ date: -1 }).limit(20);
+
+    if (!holidays) {
+      return res.json({
+        success: true,
+        holidays: [],
+      });
+    }
 
     res.json({
       success: true,
