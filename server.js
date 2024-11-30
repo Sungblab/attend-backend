@@ -512,6 +512,11 @@ function determineAttendanceStatus(timestamp) {
   const koreanTime = moment.tz(timestamp, "YYYY-MM-DD HH:mm:ss", "Asia/Seoul");
   const currentDate = koreanTime.clone().startOf("day");
 
+  // 주말 체크 추가
+  if (koreanTime.day() === 0 || koreanTime.day() === 6) {
+    return { status: "weekend", lateMinutes: 0 };
+  }
+
   const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
   const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:00";
 
@@ -528,14 +533,6 @@ function determineAttendanceStatus(timestamp) {
     .clone()
     .add(lateHour, "hours")
     .add(lateMinute, "minutes");
-
-  console.log(`Current time: ${koreanTime.format("YYYY-MM-DD HH:mm:ss")}`);
-  console.log(
-    `Normal attendance time: ${normalTime.format("YYYY-MM-DD HH:mm:ss")}`
-  );
-  console.log(
-    `Late attendance time: ${lateTime.format("YYYY-MM-DD HH:mm:ss")}`
-  );
 
   if (koreanTime.isSameOrBefore(normalTime)) {
     return { status: "present", lateMinutes: 0 };
@@ -681,6 +678,7 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
       totalAbsent,
       totalExcused,
       totalLateMinutes,
+      totalDays: totalPresent + totalLate + totalAbsent + totalExcused,
       averageAttendanceRate:
         attendances.length > 0
           ? (
@@ -748,6 +746,8 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
                 status: todayAttendance.status,
                 isExcused: todayAttendance.isExcused,
                 lateMinutes: todayAttendance.lateMinutes,
+                timestamp: todayAttendance.timestamp,
+                reason: todayAttendance.reason,
               }
             : null,
         };
@@ -1161,12 +1161,14 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
             status: todayAttendance.status,
             isExcused: todayAttendance.isExcused,
             lateMinutes: todayAttendance.lateMinutes,
+            timestamp: todayAttendance.timestamp,
             reason: todayAttendance.reason,
           }
         : null,
       totalStats,
       attendances: attendances.map((a) => ({
         date: moment(a.timestamp).format("YYYY-MM-DD"),
+        time: moment(a.timestamp).format("HH:mm:ss"),
         status: a.status,
         isExcused: a.isExcused,
         lateMinutes: a.lateMinutes,
