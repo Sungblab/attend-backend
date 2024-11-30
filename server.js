@@ -627,11 +627,11 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 // 출석 통계 API 개선
 app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
   try {
-    const { startDate, endDate, grade, classNum, studentId } = req.query;
+    const { startDate, endDate, grade, classNum } = req.query;
     const today = moment().tz("Asia/Seoul").startOf("day");
     const thisMonth = moment().tz("Asia/Seoul").startOf("month");
 
-    // 기본 쿼리 조건
+    // 필터 조건 설정
     let matchCondition = {};
     if (startDate && endDate) {
       matchCondition.timestamp = {
@@ -644,69 +644,75 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
     let userMatchCondition = {};
     if (grade) userMatchCondition.grade = parseInt(grade);
     if (classNum) userMatchCondition.class = parseInt(classNum);
-    if (studentId) userMatchCondition.studentId = studentId;
 
-    // 학생 목록 조회 (정렬 적용)
+    // 학생 목록 조회
     const students = await User.find(userMatchCondition).sort({
       grade: 1,
       class: 1,
       number: 1,
     });
 
-    // 각 학생의 상세 출석 통계 계산
+    // 월간 랭킹 계산
+    const monthlyRankings = {
+      attendance: await calculateMonthlyRankings(students, "present", 3),
+      punctuality: await calculateMonthlyRankings(students, "late", 3),
+    };
+
+    // 전체 통계 계산
+    const attendances = await Attendance.find(matchCondition);
+    const totalPresent = attendances.filter(
+      (a) => a.status === "present"
+    ).length;
+    const totalLate = attendances.filter((a) => a.status === "late").length;
+    const totalAbsent = attendances.filter(
+      (a) => a.status === "absent" && !a.isExcused
+    ).length;
+    const totalExcused = attendances.filter((a) => a.isExcused).length;
+    const totalLateMinutes = attendances.reduce(
+      (sum, a) => sum + (a.lateMinutes || 0),
+      0
+    );
+
+    const overallStats = {
+      totalStudents: students.length,
+      totalPresent,
+      totalLate,
+      totalAbsent,
+      totalExcused,
+      totalLateMinutes,
+      averageAttendanceRate:
+        attendances.length > 0
+          ? (
+              ((totalPresent + totalExcused) / attendances.length) *
+              100
+            ).toFixed(1)
+          : 0,
+    };
+
+    // 학생별 상세 통계
     const studentStats = await Promise.all(
       students.map(async (student) => {
-        // 전체 출석 기록 조회
-        const attendances = await Attendance.find({
-          studentId: student.studentId,
-          ...matchCondition,
-        }).sort({ timestamp: 1 });
-
-        // 기본 통계
-        const presentCount = attendances.filter(
+        const studentAttendances = attendances.filter(
+          (a) => a.studentId === student.studentId
+        );
+        const presentCount = studentAttendances.filter(
           (a) => a.status === "present"
         ).length;
-        const lateCount = attendances.filter((a) => a.status === "late").length;
-        const absentCount = attendances.filter(
+        const lateCount = studentAttendances.filter(
+          (a) => a.status === "late"
+        ).length;
+        const absentCount = studentAttendances.filter(
           (a) => a.status === "absent" && !a.isExcused
         ).length;
-        const excusedCount = attendances.filter((a) => a.isExcused).length;
-        const totalLateMinutes = attendances.reduce(
+        const excusedCount = studentAttendances.filter(
+          (a) => a.isExcused
+        ).length;
+        const totalLateMinutes = studentAttendances.reduce(
           (sum, a) => sum + (a.lateMinutes || 0),
           0
         );
 
-        // 월별 통계 계산
-        const monthlyStats = {};
-        attendances.forEach((attendance) => {
-          const month = moment(attendance.timestamp).format("YYYY-MM");
-          if (!monthlyStats[month]) {
-            monthlyStats[month] = {
-              present: 0,
-              late: 0,
-              absent: 0,
-              excused: 0,
-              lateMinutes: 0,
-              details: [],
-            };
-          }
-
-          monthlyStats[month][attendance.status]++;
-          if (attendance.isExcused) monthlyStats[month].excused++;
-          if (attendance.lateMinutes)
-            monthlyStats[month].lateMinutes += attendance.lateMinutes;
-
-          // 상세 기록 저장
-          monthlyStats[month].details.push({
-            date: moment(attendance.timestamp).format("YYYY-MM-DD"),
-            status: attendance.status,
-            isExcused: attendance.isExcused,
-            lateMinutes: attendance.lateMinutes,
-            reason: attendance.reason,
-          });
-        });
-
-        // 오늘의 출석 상태 확인
+        // 오늘의 출석 상태
         const todayAttendance = await Attendance.findOne({
           studentId: student.studentId,
           timestamp: {
@@ -714,13 +720,6 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
             $lt: moment(today).add(1, "day").format(),
           },
         });
-
-        // 출석률 계산
-        const totalDays = attendances.length;
-        const attendanceRate =
-          totalDays > 0
-            ? (((presentCount + excusedCount) / totalDays) * 100).toFixed(1)
-            : 0;
 
         return {
           studentId: student.studentId,
@@ -734,66 +733,31 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
             absentCount,
             excusedCount,
             totalLateMinutes,
-            attendanceRate,
+            attendanceRate:
+              studentAttendances.length > 0
+                ? (
+                    ((presentCount + excusedCount) /
+                      studentAttendances.length) *
+                    100
+                  ).toFixed(1)
+                : 0,
           },
-          monthlyStats,
           todayStatus: todayAttendance
             ? {
                 status: todayAttendance.status,
                 isExcused: todayAttendance.isExcused,
                 lateMinutes: todayAttendance.lateMinutes,
-                timestamp: todayAttendance.timestamp,
               }
             : null,
-          lastAttendance:
-            attendances.length > 0
-              ? {
-                  status: attendances[attendances.length - 1].status,
-                  timestamp: attendances[attendances.length - 1].timestamp,
-                  isExcused: attendances[attendances.length - 1].isExcused,
-                }
-              : null,
         };
       })
     );
-
-    // 전체 통계
-    const overallStats = {
-      totalStudents: students.length,
-      totalPresent: studentStats.reduce(
-        (sum, s) => sum + s.summary.presentCount,
-        0
-      ),
-      totalLate: studentStats.reduce((sum, s) => sum + s.summary.lateCount, 0),
-      totalAbsent: studentStats.reduce(
-        (sum, s) => sum + s.summary.absentCount,
-        0
-      ),
-      totalExcused: studentStats.reduce(
-        (sum, s) => sum + s.summary.excusedCount,
-        0
-      ),
-      averageAttendanceRate: (
-        studentStats.reduce(
-          (sum, s) => sum + parseFloat(s.summary.attendanceRate),
-          0
-        ) / students.length
-      ).toFixed(1),
-    };
-
-    // 이달의 통계 (TOP 3)
-    const monthlyRankings = {
-      attendance: await calculateMonthlyRankings(students, "present", 3),
-      punctuality: await calculateMonthlyRankings(students, "late", 3, true),
-      improvement: await calculateImprovementRankings(students, 3),
-    };
 
     res.json({
       success: true,
       studentStats,
       overallStats,
       monthlyRankings,
-      timestamp: moment().tz("Asia/Seoul").format(),
     });
   } catch (error) {
     console.error("통계 조회 중 오류:", error);
@@ -805,13 +769,8 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// 월간 랭킹 계산 함수
-async function calculateMonthlyRankings(
-  students,
-  type,
-  limit = 3,
-  reverse = false
-) {
+// 월간 랭킹 계산 함수 추가
+async function calculateMonthlyRankings(students, type, limit = 3) {
   const thisMonth = moment().tz("Asia/Seoul").startOf("month");
   const today = moment().tz("Asia/Seoul").endOf("day");
 
@@ -825,15 +784,22 @@ async function calculateMonthlyRankings(
         },
       });
 
-      let count = 0;
-      let minutes = 0;
-
-      if (type === "present") {
-        count = attendances.filter((a) => a.status === "present").length;
-      } else if (type === "late") {
-        count = attendances.filter((a) => a.status === "late").length;
-        minutes = attendances.reduce((sum, a) => sum + (a.lateMinutes || 0), 0);
-      }
+      // 출석 횟수 계산
+      const presentCount = attendances.filter(
+        (a) => a.status === "present"
+      ).length;
+      // 지각 횟수와 시간 계산
+      const lateCount = attendances.filter((a) => a.status === "late").length;
+      const totalLateMinutes = attendances.reduce(
+        (sum, a) => sum + (a.lateMinutes || 0),
+        0
+      );
+      // 결석 횟수 계산
+      const absentCount = attendances.filter(
+        (a) => a.status === "absent" && !a.isExcused
+      ).length;
+      // 인정결석 횟수 계산
+      const excusedCount = attendances.filter((a) => a.isExcused).length;
 
       return {
         studentId: student.studentId,
@@ -841,63 +807,27 @@ async function calculateMonthlyRankings(
         grade: student.grade,
         class: student.class,
         number: student.number,
-        count,
-        minutes,
+        presentCount,
+        lateCount,
+        absentCount,
+        excusedCount,
+        totalLateMinutes,
+        count: type === "present" ? presentCount : lateCount,
+        minutes: totalLateMinutes,
       };
     })
   );
 
+  // 정렬 및 상위 N개 반환
   return rankings
     .sort((a, b) => {
-      if (type === "late") {
-        if (reverse) {
-          return a.count - b.count || a.minutes - b.minutes;
-        }
-        return b.count - a.count || b.minutes - a.minutes;
+      if (type === "present") {
+        return b.count - a.count;
       }
-      return reverse ? a.count - b.count : b.count - a.count;
+      // 지각의 경우 지각 횟수가 적은 순
+      return a.count - b.count || a.minutes - b.minutes;
     })
     .slice(0, limit);
-}
-
-// 개선도 랭킹 계산 함수
-async function calculateImprovementRankings(students, limit = 3) {
-  const thisMonth = moment().tz("Asia/Seoul").startOf("month");
-  const lastMonth = moment()
-    .tz("Asia/Seoul")
-    .subtract(1, "month")
-    .startOf("month");
-
-  const rankings = await Promise.all(
-    students.map(async (student) => {
-      // 이번 달 통계
-      const thisMonthStats = await calculateMonthStats(
-        student.studentId,
-        thisMonth
-      );
-      // 지난 달 통계
-      const lastMonthStats = await calculateMonthStats(
-        student.studentId,
-        lastMonth
-      );
-
-      // 개선도 계산 (지각 감소율, 출석 증가율 등)
-      const improvement = calculateImprovement(lastMonthStats, thisMonthStats);
-
-      return {
-        studentId: student.studentId,
-        name: student.name,
-        grade: student.grade,
-        class: student.class,
-        number: student.number,
-        improvement,
-        thisMonth: thisMonthStats,
-        lastMonth: lastMonthStats,
-      };
-    })
-  );
-
-  return rankings.sort((a, b) => b.improvement - a.improvement).slice(0, limit);
 }
 
 // 1. 비밀번호 정책 강화
