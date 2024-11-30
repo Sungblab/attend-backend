@@ -10,7 +10,14 @@ require("dotenv").config();
 const app = express();
 
 // Middleware
-app.use(cors());
+app.use(
+  cors({
+    origin: "*", // 개발 중에는 모든 도메인 허용
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // MongoDB connection
@@ -149,28 +156,47 @@ app.post("/api/signup", async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    res.status(500).json({ message: "서버 오류가 생했습니다." });
   }
 });
 
 app.post("/api/login", async (req, res) => {
   try {
     const { studentId, password } = req.body;
+    console.log("로그인 요청:", { studentId }); // 디버깅용
+
+    if (!studentId || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "학번과 비밀번호를 모두 입력해주세요.",
+      });
+    }
 
     const user = await User.findOne({ studentId });
+    console.log("사용자 찾음:", user ? "있음" : "없음"); // 디버깅용
+
     if (!user) {
-      return res.status(400).json({ message: "존재하지 않는 학번입니다." });
+      return res.status(400).json({
+        success: false,
+        message: "존재하지 않는 학번입니다.",
+      });
     }
 
     if (!user.isApproved) {
-      return res
-        .status(400)
-        .json({ message: "관리자의 승인을 기다리고 있습니다." });
+      return res.status(400).json({
+        success: false,
+        message: "관리자의 승인을 기다리고 있습니다.",
+      });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
+    console.log("비밀번호 일치:", isMatch); // 디버깅용
+
     if (!isMatch) {
-      return res.status(400).json({ message: "비밀번호가 일치하지 않습니다." });
+      return res.status(400).json({
+        success: false,
+        message: "비밀번호가 일치하지 않습니다.",
+      });
     }
 
     const token = jwt.sign(
@@ -178,7 +204,9 @@ app.post("/api/login", async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
+
     res.json({
+      success: true,
       token,
       user: {
         id: user._id,
@@ -189,8 +217,12 @@ app.post("/api/login", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    console.error("로그인 처리 중 에러:", error); // 디버깅용
+    res.status(500).json({
+      success: false,
+      message: "서버 오류가 발생했습니다.",
+      error: error.message,
+    });
   }
 });
 
@@ -394,7 +426,7 @@ app.post("/api/generate-qr", verifyToken, async (req, res) => {
   }
 });
 
-// 한국 시간으로 변환하는 함수
+// 한국 시간으로 변환하는 수
 function toKoreanTimeString(date) {
   return moment(date).tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss");
 }
