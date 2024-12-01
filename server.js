@@ -70,7 +70,7 @@ const generateAccessToken = (user) => {
       isReader: user.isReader,
     },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || "1h" }
+    { expiresIn: "7d" }
   );
 };
 
@@ -79,9 +79,12 @@ const generateRefreshToken = () => {
   return crypto.randomBytes(40).toString("hex");
 };
 
-// 리프레시 토큰 만료 시간 설정 수정
-const REFRESH_TOKEN_EXPIRES_IN =
-  parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN) || 7 * 24 * 60 * 60 * 1000;
+// 리프레시 토큰 만료 시간을 로그인 유지 여부에 따라 설정
+const getRefreshTokenExpiresIn = (keepLoggedIn) => {
+  return keepLoggedIn
+    ? 365 * 24 * 60 * 60 * 1000 // 1년
+    : 30 * 24 * 60 * 60 * 1000; // 30일
+};
 
 // 토큰 검증 미들웨어 수정
 const verifyToken = (req, res, next) => {
@@ -218,7 +221,7 @@ app.post("/api/signup", async (req, res) => {
 
 app.post("/api/login", async (req, res) => {
   try {
-    const { studentId, password } = req.body;
+    const { studentId, password, keepLoggedIn } = req.body;
 
     const user = await User.findOne({ studentId });
     if (!user) {
@@ -251,7 +254,7 @@ app.post("/api/login", async (req, res) => {
     const refreshTokenDoc = new RefreshToken({
       userId: user._id,
       token: refreshToken,
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRES_IN),
+      expiresAt: new Date(Date.now() + getRefreshTokenExpiresIn(keepLoggedIn)),
     });
 
     // 기존 리프레시 토큰 삭제
@@ -610,7 +613,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
         .json({ message: "이미 오늘 출석이 기록되었습니다." });
     }
 
-    // 출석 기록 생성 및 저장
+    // 석 기록 생성 및 저장
     const attendance = new Attendance({
       studentId,
       timestamp: timestamp,
@@ -909,10 +912,15 @@ const RefreshToken = mongoose.model("RefreshToken", RefreshTokenSchema);
 app.post("/api/refresh-token", async (req, res) => {
   try {
     const { refreshToken } = req.body;
+
     if (!refreshToken) {
-      return res.status(400).json({ message: "리프레시 토큰이 필요합니다." });
+      return res.status(400).json({
+        success: false,
+        message: "리프레시 토큰이 필요합니다.",
+      });
     }
 
+    // 리프레시 토큰 검증
     const refreshTokenDoc = await RefreshToken.findOne({
       token: refreshToken,
       expiresAt: { $gt: new Date() },
@@ -926,6 +934,7 @@ app.post("/api/refresh-token", async (req, res) => {
       });
     }
 
+    // 사용자 정보 조회
     const user = await User.findById(refreshTokenDoc.userId);
     if (!user) {
       await RefreshToken.deleteOne({ _id: refreshTokenDoc._id });
@@ -939,8 +948,10 @@ app.post("/api/refresh-token", async (req, res) => {
     // 새로운 액세스 토큰 생성
     const accessToken = generateAccessToken(user);
 
-    // 새로 리프레시 토큰 생성
+    // 새로운 리프레시 토큰 생성
     const newRefreshToken = generateRefreshToken();
+
+    // 기존 리프레시 토큰 업데이트
     await RefreshToken.findByIdAndUpdate(refreshTokenDoc._id, {
       token: newRefreshToken,
       expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRES_IN),
@@ -960,7 +971,10 @@ app.post("/api/refresh-token", async (req, res) => {
     });
   } catch (error) {
     console.error("Refresh token error:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    res.status(500).json({
+      success: false,
+      message: "토큰 갱신 중 오류가 발생했습니다.",
+    });
   }
 });
 
@@ -1138,7 +1152,7 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
       ? moment.tz(endDate, "Asia/Seoul").endOf("day")
       : moment().tz("Asia/Seoul").endOf("day");
 
-    // 출석 기록 조회
+    // 출석 기��� 조회
     const attendances = await Attendance.find({
       studentId,
       timestamp: {
