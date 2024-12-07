@@ -731,7 +731,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     console.error("출석 처리 중 오류:", error);
     res.status(500).json({
       success: false,
-      message: "출석 처리 중 오류가 발생했습니다.",
+      message: "출석 처리 중 오류가 발생했습니���.",
     });
   }
 });
@@ -1444,7 +1444,7 @@ app.get("/api/attendance/excused", verifyToken, async (req, res) => {
       .sort({ timestamp: -1 })
       .limit(20); // 최근 20개만 조회
 
-    // 학생 정보 조회를 위한 Promise.all 사용
+    // 학��� 정보 조회를 위한 Promise.all 사용
     const excusedWithStudentInfo = await Promise.all(
       excusedAttendances.map(async (attendance) => {
         const student = await User.findOne({ studentId: attendance.studentId });
@@ -1481,7 +1481,7 @@ const HolidaySchema = new mongoose.Schema({
 
 const Holiday = mongoose.model("Holiday", HolidaySchema);
 
-// 휴일 등록 API
+// 휴일 등록 API 수정
 app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
   try {
     const { date, reason } = req.body;
@@ -1509,7 +1509,12 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
     res.json({
       success: true,
       message: "휴일이 등록되었습니다.",
-      holiday,
+      holiday: {
+        id: holiday._id,
+        date: moment(holiday.date).format("YYYY-MM-DD"),
+        reason: holiday.reason,
+        createdBy: req.user.name || "관리자",
+      },
     });
   } catch (error) {
     console.error("휴일 등록 중 오류:", error);
@@ -1520,7 +1525,7 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// 휴일 목록 조회 API
+// 휴일 목록 조회 API 수정
 app.get("/api/holidays", verifyToken, async (req, res) => {
   try {
     const holidays = await Holiday.find()
@@ -1534,14 +1539,14 @@ app.get("/api/holidays", verifyToken, async (req, res) => {
         date: moment(h.date).format("YYYY-MM-DD"),
         reason: h.reason,
         createdAt: h.createdAt,
-        createdBy: h.createdBy?.name || "알 수 없음",
+        createdBy: h.createdBy?.name || "관리자",
       })),
     });
   } catch (error) {
     console.error("휴일 목록 조회 중 오류:", error);
     res.status(500).json({
       success: false,
-      message: "휴일 목록 조회 중 오류가 발생했습니큈다.",
+      message: "휴일 목록 조회 중 오류가 발생했습니다.",
     });
   }
 });
@@ -1637,7 +1642,7 @@ function validateEnvVariables() {
     process.exit(1);
   }
 
-  // ENCRYPTION_KEY 길이 검증
+  // ENCRYPTION_KEY ��이 검증
   if (process.env.ENCRYPTION_KEY.length !== 32) {
     console.error("ENCRYPTION_KEY는 정확히 32자여야 합니다.");
     process.exit(1);
