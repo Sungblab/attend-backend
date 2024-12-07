@@ -21,10 +21,10 @@ app.use(express.json());
 
 // rate limiter 설정
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15분
-  max: 100, // IP당 최대 요청 수
-  standardHeaders: true, // 표준 RateLimit 헤더 반환
-  legacyHeaders: false, // X-RateLimit 헤더 비활성화
+  windowMs: process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000,
+  max: process.env.RATE_LIMIT_MAX_REQUESTS || 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // rate limiter 적용
@@ -70,7 +70,7 @@ const generateAccessToken = (user) => {
       isReader: user.isReader,
     },
     process.env.JWT_SECRET,
-    { expiresIn: "7d" }
+    { expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "7d" }
   );
 };
 
@@ -82,8 +82,10 @@ const generateRefreshToken = () => {
 // 리프레시 토큰 만료 시간을 로그인 유지 여부에 따라 설정
 const getRefreshTokenExpiresIn = (keepLoggedIn) => {
   return keepLoggedIn
-    ? 365 * 24 * 60 * 60 * 1000 // 1년
-    : 30 * 24 * 60 * 60 * 1000; // 30일
+    ? parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN) ||
+        365 * 24 * 60 * 60 * 1000
+    : parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN) ||
+        30 * 24 * 60 * 60 * 1000;
 };
 
 // 토큰 검증 미들웨어 수정
@@ -164,7 +166,7 @@ const isReader = async (req, res, next) => {
   }
 };
 
-// Routes
+// 회원가입 라우트 수정
 app.post("/api/signup", async (req, res) => {
   try {
     const {
@@ -175,6 +177,26 @@ app.post("/api/signup", async (req, res) => {
       class: classNumber,
       number,
     } = req.body;
+
+    // 학번 형식 검증 (4자리 숫자)
+    if (!/^\d{4}$/.test(studentId)) {
+      return res.status(400).json({ message: "학번은 4자리 숫자여야 합니다." });
+    }
+
+    // 이름 형식 검증 (2-4자 한글)
+    if (!/^[가-힣]{2,4}$/.test(name)) {
+      return res
+        .status(400)
+        .json({ message: "이름은 2-4자의 한글이어야 합니다." });
+    }
+
+    // 비밀번호 길이 검증
+    const { isValid } = validatePassword(password);
+    if (!isValid) {
+      return res.status(400).json({
+        message: "비밀번호는 8자 이상이어야 합니다.",
+      });
+    }
 
     let user = await User.findOne({ studentId });
     if (user) {
@@ -219,32 +241,63 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
-app.post("/api/login", async (req, res) => {
+// 로그인 시도 횟수 관리를 위한 Map
+const loginAttempts = new Map();
+
+// 로그인 시도 횟수 체크 미들웨어
+const checkLoginAttempts = async (req, res, next) => {
+  const ip = req.ip;
+  const currentAttempts = loginAttempts.get(ip) || {
+    count: 0,
+    timestamp: Date.now(),
+  };
+
+  // 잠금 시간이 지났는지 확인
+  if (currentAttempts.count >= process.env.MAX_LOGIN_ATTEMPTS) {
+    const lockoutTime = parseInt(process.env.LOGIN_LOCKOUT_TIME);
+    if (Date.now() - currentAttempts.timestamp < lockoutTime) {
+      return res.status(429).json({
+        success: false,
+        message: "너무 많은 로그인 시도. 잠시 후 다시 시도해주세요.",
+        remainingTime: Math.ceil(
+          (lockoutTime - (Date.now() - currentAttempts.timestamp)) / 1000
+        ),
+      });
+    } else {
+      // 잠금 시간이 지났으면 초기화
+      loginAttempts.delete(ip);
+    }
+  }
+
+  next();
+};
+
+// 로그인 라우트에 미들웨어 적용
+app.post("/api/login", checkLoginAttempts, async (req, res) => {
   try {
     const { studentId, password, keepLoggedIn } = req.body;
+    const ip = req.ip;
 
     const user = await User.findOne({ studentId });
     if (!user) {
+      incrementLoginAttempts(ip);
       return res.status(400).json({
         success: false,
-        message: "재하지 않는 학번입니다.",
-      });
-    }
-
-    if (!user.isApproved) {
-      return res.status(400).json({
-        success: false,
-        message: "관리자의 승인을 기다리고 있습니다.",
+        message: "존재하지 않는 학번입니다.",
       });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
+      incrementLoginAttempts(ip);
       return res.status(400).json({
         success: false,
         message: "비밀번호가 일치하지 않습니다.",
       });
     }
+
+    // 로그인 성공 시 시도 횟수 초기화
+    loginAttempts.delete(ip);
 
     // 액세스 토큰 생성
     const accessToken = generateAccessToken(user);
@@ -273,6 +326,7 @@ app.post("/api/login", async (req, res) => {
         isAdmin: user.isAdmin,
         isReader: user.isReader,
       },
+      redirectUrl: !user.isAdmin && !user.isReader ? "/qr.html" : "/hub.html",
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -282,6 +336,17 @@ app.post("/api/login", async (req, res) => {
     });
   }
 });
+
+// 로그인 시도 횟수 증가 함수
+function incrementLoginAttempts(ip) {
+  const currentAttempts = loginAttempts.get(ip) || {
+    count: 0,
+    timestamp: Date.now(),
+  };
+  currentAttempts.count += 1;
+  currentAttempts.timestamp = Date.now();
+  loginAttempts.set(ip, currentAttempts);
+}
 
 app.post("/api/change-password", verifyToken, async (req, res) => {
   try {
@@ -629,7 +694,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     if (status === "present") {
       message = "출석 처리되었습니다.";
     } else if (status === "late") {
-      message = `지각 처리되었습니다. 지각 시간: ${lateMinutes}분`;
+      message = `지각 처리되었었습니다. 지각 시간: ${lateMinutes}분`;
     } else {
       message = "결석 처리되었습니다.";
     }
@@ -848,7 +913,7 @@ async function calculateMonthlyRankings(students, type, limit = 3) {
     })
   );
 
-  // 정렬 및 상위 N개 반환
+  // 정렬 및 상위 N개 반���
   return rankings
     .sort((a, b) => {
       if (type === "present") return b.count - a.count;
@@ -860,19 +925,12 @@ async function calculateMonthlyRankings(students, type, limit = 3) {
 
 // 1. 비밀번호 정책 강화
 const validatePassword = (password) => {
-  const minLength = 8;
-  const hasUpperCase = /[A-Z]/.test(password);
-  const hasLowerCase = /[a-z]/.test(password);
-  const hasNumbers = /\d/.test(password);
-  const hasSpecialChar = /[!@#$%^&*]/.test(password);
-
-  return (
-    password.length >= minLength &&
-    hasUpperCase &&
-    hasLowerCase &&
-    hasNumbers &&
-    hasSpecialChar
-  );
+  return {
+    isValid: password.length >= 8,
+    requirements: {
+      length: password.length >= 8,
+    },
+  };
 };
 
 app.use(limiter);
@@ -882,13 +940,24 @@ app.use(helmet());
 
 // 4. 로그 시스템 추가
 const logger = winston.createLogger({
-  level: "info",
-  format: winston.format.json(),
+  level: process.env.LOG_LEVEL || "info",
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
   transports: [
     new winston.transports.File({ filename: "error.log", level: "error" }),
     new winston.transports.File({ filename: "combined.log" }),
   ],
 });
+
+if (process.env.NODE_ENV !== "production") {
+  logger.add(
+    new winston.transports.Console({
+      format: winston.format.simple(),
+    })
+  );
+}
 
 // RefreshToken 모델 추가
 const RefreshTokenSchema = new mongoose.Schema({
@@ -908,7 +977,7 @@ const RefreshTokenSchema = new mongoose.Schema({
 
 const RefreshToken = mongoose.model("RefreshToken", RefreshTokenSchema);
 
-// 리프레시 토큰 엔드포인트 수정
+// 리프레시 토큰 엔드 포인트 수정
 app.post("/api/refresh-token", async (req, res) => {
   try {
     const { refreshToken } = req.body;
@@ -1120,7 +1189,7 @@ function calculateImprovement(lastMonth, thisMonth) {
   return parseFloat(improvement.toFixed(1));
 }
 
-// 학생별 상세 통계 API
+// 학학생별 상세 통계 API
 app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
   try {
     const { studentId } = req.params;
@@ -1152,7 +1221,7 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
       ? moment.tz(endDate, "Asia/Seoul").endOf("day")
       : moment().tz("Asia/Seoul").endOf("day");
 
-    // 출석 기��� 조회
+    // 출석 기록 조회
     const attendances = await Attendance.find({
       studentId,
       timestamp: {
@@ -1445,3 +1514,48 @@ async function handleAutoAbsent() {
     );
   }
 }
+
+// 환경 변수 검증 함수
+function validateEnvVariables() {
+  const requiredEnvVars = [
+    "MONGODB_URI",
+    "JWT_SECRET",
+    "REFRESH_TOKEN_SECRET",
+    "ENCRYPTION_KEY",
+  ];
+
+  const missingEnvVars = requiredEnvVars.filter(
+    (envVar) => !process.env[envVar]
+  );
+
+  if (missingEnvVars.length > 0) {
+    console.error("필수 환경 변수가 설정되지 않았습니다:", missingEnvVars);
+    process.exit(1);
+  }
+
+  // ENCRYPTION_KEY 길이 검증
+  if (process.env.ENCRYPTION_KEY.length !== 32) {
+    console.error("ENCRYPTION_KEY는 정확히 32자여야 합니다.");
+    process.exit(1);
+  }
+}
+
+// 서버 시작 전에 환경 변수 검증
+validateEnvVariables();
+
+// XSS 방지를 위한 미들웨어 추가
+app.use(helmet.xssFilter());
+app.use(helmet.noSniff());
+
+// CORS 설정 강화
+app.use(
+  cors({
+    origin:
+      process.env.NODE_ENV === "production"
+        ? ["https://attendhs.netlify.app"]
+        : ["http://localhost:5500"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+);
