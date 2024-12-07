@@ -438,7 +438,7 @@ app.post("/api/logout", verifyToken, async (req, res) => {
     await RefreshToken.deleteOne({ token: refreshToken });
     res.json({ success: true, message: "로그아웃되었습니다." });
   } catch (error) {
-    res.status(500).json({ message: "서버 오류가 발��했습니다." });
+    res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
 
@@ -693,15 +693,16 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   try {
     const { encryptedData } = req.body;
 
-    if (!encryptedData) {
+    //데이터 유효성 검사 강화
+    if (!encryptedData || typeof encryptedData !== "string") {
       return res.status(400).json({
         success: false,
-        message: "QR 코드 데이터가 없습니다.",
+        message: "유효하지 않은 QR 코드 데이터입니다.",
       });
     }
 
-    // QR 코드 복호화 및 데이터 추출
-    const [ivHex, encryptedHex] = encryptedData.split(":");
+    // QR 코드 형식 검사
+    const [ivHex, encryptedHex] = encryptedData.trim().split(":");
     if (!ivHex || !encryptedHex) {
       return res.status(400).json({
         success: false,
@@ -709,88 +710,93 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       });
     }
 
-    const iv = Buffer.from(ivHex, "hex");
-    const encrypted = Buffer.from(encryptedHex, "hex");
-    const decipher = crypto.createDecipheriv(
-      "aes-256-cbc",
-      Buffer.from(process.env.ENCRYPTION_KEY),
-      iv
-    );
-    let decrypted = decipher.update(encrypted);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-    const [studentId, timestamp] = decrypted.toString().split("|");
+    try {
+      const iv = Buffer.from(ivHex, "hex");
+      const encrypted = Buffer.from(encryptedHex, "hex");
+      const decipher = crypto.createDecipheriv(
+        "aes-256-cbc",
+        Buffer.from(process.env.ENCRYPTION_KEY),
+        iv
+      );
+      let decrypted = decipher.update(encrypted);
+      decrypted = Buffer.concat([decrypted, decipher.final()]);
+      const [studentId, timestamp] = decrypted.toString().split("|");
 
-    if (!studentId || !timestamp) {
-      return res.status(400).json({
-        success: false,
-        message: "QR 코드에서 학생 정보를 추출�� 수 없습니다.",
+      if (!studentId || !timestamp) {
+        throw new Error("QR 코드 데이터 형식이 올바르지 않습니다.");
+      }
+
+      // 학생 정보 조회
+      const student = await User.findOne({ studentId });
+      if (!student) {
+        return res.status(400).json({
+          success: false,
+          message: "등록되지 않은 학생입니다.",
+        });
+      }
+
+      // 출석 상태 결정
+      const attendanceStatus = await determineAttendanceStatus(timestamp);
+      if (!attendanceStatus.success) {
+        return res.status(400).json({
+          success: false,
+          message: attendanceStatus.message,
+        });
+      }
+
+      // 기존 출석 기록 확인
+      const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
+      const tomorrow = moment(today).add(1, "days");
+
+      const existingAttendance = await Attendance.findOne({
+        studentId,
+        timestamp: {
+          $gte: today.format(),
+          $lt: tomorrow.format(),
+        },
       });
-    }
 
-    // 학생 정보 조회
-    const student = await User.findOne({ studentId });
-    if (!student) {
-      return res.status(400).json({
-        success: false,
-        message: "등록되지 않은 학생입니다.",
+      if (existingAttendance) {
+        return res.status(400).json({
+          success: false,
+          message: "이미 오늘 출석이 기록되었습니다.",
+          attendance: {
+            ...existingAttendance.toObject(),
+            name: student.name,
+          },
+        });
+      }
+
+      // 새로운 출석 기록 생성
+      const attendance = new Attendance({
+        studentId,
+        timestamp,
+        status: attendanceStatus.status,
+        lateMinutes: attendanceStatus.lateMinutes,
       });
-    }
 
-    // 출석 상태 결정
-    const attendanceStatus = await determineAttendanceStatus(timestamp);
-    if (!attendanceStatus.success) {
-      return res.status(400).json({
-        success: false,
+      await attendance.save();
+
+      res.status(201).json({
+        success: true,
         message: attendanceStatus.message,
-      });
-    }
-
-    // 기존 출석 기록 확인
-    const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
-    const tomorrow = moment(today).add(1, "days");
-
-    const existingAttendance = await Attendance.findOne({
-      studentId,
-      timestamp: {
-        $gte: today.format(),
-        $lt: tomorrow.format(),
-      },
-    });
-
-    if (existingAttendance) {
-      return res.status(400).json({
-        success: false,
-        message: "이미 오늘 출석이 기록되었습니다.",
         attendance: {
-          ...existingAttendance.toObject(),
+          ...attendance.toObject(),
           name: student.name,
         },
       });
+    } catch (cryptoError) {
+      console.error("복호화 오류:", cryptoError);
+      return res.status(400).json({
+        success: false,
+        message: "QR 코드 복호화에 실패했습니다.",
+      });
     }
-
-    // 새로운 출석 기록 생성
-    const attendance = new Attendance({
-      studentId,
-      timestamp,
-      status: attendanceStatus.status,
-      lateMinutes: attendanceStatus.lateMinutes,
-    });
-
-    await attendance.save();
-
-    res.status(201).json({
-      success: true,
-      message: attendanceStatus.message,
-      attendance: {
-        ...attendance.toObject(),
-        name: student.name,
-      },
-    });
   } catch (error) {
     console.error("출석 처리 중 오류:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "출석 처리 중 오류가 발생했습니다.",
+      message: error.message || "출석 처리 중 오류가 발생했습니다.",
     });
   }
 });
@@ -1689,7 +1695,7 @@ async function handleAutoAbsent() {
   } catch (error) {
     console.error("자동 결석 처리 중 오류:", error);
     showToast(
-      error.response?.data?.message || "자동 결�� 처리 중 오류가 발생했습니다.",
+      error.response?.data?.message || "자동 결석 처리 중 오류가 발생했습니다.",
       "error"
     );
   }
