@@ -693,7 +693,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   try {
     const { encryptedData } = req.body;
 
-    //데이터 유효성 검사 강화
+    // 데이터 유효성 검사 강화
     if (!encryptedData || typeof encryptedData !== "string") {
       return res.status(400).json({
         success: false,
@@ -701,7 +701,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       });
     }
 
-    // QR 코드 형식 검사
+    // QR 코드 형식 검사 추가
     const [ivHex, encryptedHex] = encryptedData.trim().split(":");
     if (!ivHex || !encryptedHex) {
       return res.status(400).json({
@@ -722,6 +722,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       decrypted = Buffer.concat([decrypted, decipher.final()]);
       const [studentId, timestamp] = decrypted.toString().split("|");
 
+      // 복호화된 데이터 검증 추가
       if (!studentId || !timestamp) {
         throw new Error("QR 코드 데이터 형식이 올바르지 않습니다.");
       }
@@ -823,7 +824,7 @@ async function processAutoAbsent() {
       return;
     }
 
-    // 결석 처리 시간 확인 (9시 이후)
+    // 결석 처리 시간 ��인 (9시 이후)
     const [lateHour, lateMinute] = LATE_ATTENDANCE_TIME.split(":").map(Number);
     const cutoffTime = today
       .clone()
@@ -871,7 +872,7 @@ async function processAutoAbsent() {
   }
 }
 
-// 매일 9시에 자동 결석 처리 실행
+// 매일 9시에 자��� 결석 처리 실행
 const schedule = require("node-schedule");
 schedule.scheduleJob("0 9 * * *", processAutoAbsent);
 
@@ -1238,7 +1239,7 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
     });
 
     if (!attendance) {
-      // 출석 기록이 없는 경우 새로 생성
+      // 출석 기록이 없는 경우 새로 생��
       const newAttendance = new Attendance({
         studentId,
         timestamp: moment.tz(date, "Asia/Seoul").format(),
@@ -1348,7 +1349,7 @@ function calculateImprovement(lastMonth, thisMonth) {
       ? 100
       : 0;
 
-  // 가중치 적용
+  // 가중치 적��
   improvement =
     attendanceImprovement * 0.4 + // 출률 개선 40%
     lateReduction * 0.2 + // 지각 횟수 감소 20%
