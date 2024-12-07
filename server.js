@@ -493,7 +493,7 @@ app.post(
       user.password = hashedPassword;
       await user.save();
 
-      res.json({ message: "비밀번호가 초기화되었습니다." });
+      res.json({ message: "비밀번호가 초기화되었니다." });
     } catch (error) {
       console.error("비밀번호 초기화 중 오류 발생:", error);
       res.status(500).json({ message: "서버 오류가 발생했습니다." });
@@ -590,7 +590,7 @@ const AttendanceSchema = new mongoose.Schema({
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
 // 출석 시간 상수 추가 (server.js 파일 상단에 추가)
-const ATTENDANCE_START_TIME = "08:30"; // 출석 시작 시간
+const ATTENDANCE_START_TIME = "08:30"; // 출석 시작 ��간
 const NORMAL_ATTENDANCE_TIME = "08:40"; // 정상 출석 마감 시간
 const LATE_ATTENDANCE_TIME = "09:00"; // 지각 마감 시간
 
@@ -688,7 +688,7 @@ async function determineAttendanceStatus(timestamp) {
   }
 }
 
-// 출석 처리 API 수정
+// 출석 처리 API 수��
 app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   try {
     const { encryptedData } = req.body;
@@ -702,7 +702,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     }
 
     // QR 코드 형식 검사 추가
-    const [ivHex, encryptedHex] = encryptedData.trim().split(":");
+    const [ivHex, encryptedHex] = encryptedData.split(":");
     if (!ivHex || !encryptedHex) {
       return res.status(400).json({
         success: false,
@@ -711,8 +711,8 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     }
 
     try {
-      const iv = Buffer.from(ivHex, "hex");
-      const encrypted = Buffer.from(encryptedHex, "hex");
+      const iv = Buffer.from(ivHex.trim(), "hex");
+      const encrypted = Buffer.from(encryptedHex.trim(), "hex");
       const decipher = crypto.createDecipheriv(
         "aes-256-cbc",
         Buffer.from(process.env.ENCRYPTION_KEY),
@@ -810,7 +810,7 @@ async function processAutoAbsent() {
 
     // 주말 체크
     if (now.day() === 0 || now.day() === 6) {
-      console.log("주말은 자동 결석 처리를 하지 않습니다.");
+      console.log("주말 자동 결석 처리를 하지 않습니다.");
       return;
     }
 
@@ -824,7 +824,7 @@ async function processAutoAbsent() {
       return;
     }
 
-    // 결석 처리 시간 ��인 (9시 이후)
+    // 결석 처리 시간 인 (9시 이후)
     const [lateHour, lateMinute] = LATE_ATTENDANCE_TIME.split(":").map(Number);
     const cutoffTime = today
       .clone()
@@ -872,7 +872,7 @@ async function processAutoAbsent() {
   }
 }
 
-// 매일 9시에 자��� 결석 처리 실행
+// 매일 9시에 자�� 결석 처리 실행
 const schedule = require("node-schedule");
 schedule.scheduleJob("0 9 * * *", processAutoAbsent);
 
@@ -1239,7 +1239,7 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
     });
 
     if (!attendance) {
-      // 출석 기록이 없는 경우 새로 생��
+      // 출석 기록이 없는 경우 새로 생성
       const newAttendance = new Attendance({
         studentId,
         timestamp: moment.tz(date, "Asia/Seoul").format(),
@@ -1349,7 +1349,7 @@ function calculateImprovement(lastMonth, thisMonth) {
       ? 100
       : 0;
 
-  // 가중치 적��
+  // 가중치 적용
   improvement =
     attendanceImprovement * 0.4 + // 출률 개선 40%
     lateReduction * 0.2 + // 지각 횟수 감소 20%
@@ -1529,7 +1529,7 @@ app.get("/api/attendance/excused", verifyToken, async (req, res) => {
       excused: excusedWithStudentInfo,
     });
   } catch (error) {
-    console.error("인정결석 목록 조회 중 오류:", error);
+    console.error("인정결석 목록 조회 중 오오류:", error);
     res.status(500).json({
       success: false,
       message: "인정결석 목록 조회 중 오류가 발생했습니다.",
