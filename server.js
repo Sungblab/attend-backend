@@ -326,7 +326,7 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
         isAdmin: user.isAdmin,
         isReader: user.isReader,
       },
-      redirectUrl: !user.isAdmin && !user.isReader ? "/qr.html" : "/hub.html",
+      redirectUrl: user.isAdmin || user.isReader ? "/hub.html" : "/qr.html",
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -590,18 +590,36 @@ const AttendanceSchema = new mongoose.Schema({
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
 // 출석 상태 결정 함수 수정
-function determineAttendanceStatus(timestamp) {
+async function determineAttendanceStatus(timestamp) {
   const koreanTime = moment.tz(timestamp, "YYYY-MM-DD HH:mm:ss", "Asia/Seoul");
   const currentDate = koreanTime.clone().startOf("day");
 
-  const normalAttendanceTime = process.env.NORMAL_ATTENDANCE_TIME || "08:03";
-  const lateAttendanceTime = process.env.LATE_ATTENDANCE_TIME || "09:00";
+  // 주말 체크
+  const isWeekend = koreanTime.day() === 0 || koreanTime.day() === 6;
+  if (isWeekend) {
+    return { status: "weekend", message: "주말은 출석체크를 하지 않습니다." };
+  }
 
-  const [normalHour, normalMinute] = normalAttendanceTime
-    .split(":")
-    .map(Number);
-  const [lateHour, lateMinute] = lateAttendanceTime.split(":").map(Number);
+  // 휴일 체크
+  const isHoliday = await Holiday.findOne({
+    date: currentDate.toDate(),
+  });
+  if (isHoliday) {
+    return {
+      status: "holiday",
+      message: `휴일(${isHoliday.reason})은 출석체크를 하지 않습니다.`,
+    };
+  }
 
+  const [startHour, startMinute] = ATTENDANCE_START_TIME.split(":").map(Number);
+  const [normalHour, normalMinute] =
+    NORMAL_ATTENDANCE_TIME.split(":").map(Number);
+  const [lateHour, lateMinute] = LATE_ATTENDANCE_TIME.split(":").map(Number);
+
+  const startTime = currentDate
+    .clone()
+    .add(startHour, "hours")
+    .add(startMinute, "minutes");
   const normalTime = currentDate
     .clone()
     .add(normalHour, "hours")
@@ -611,29 +629,47 @@ function determineAttendanceStatus(timestamp) {
     .add(lateHour, "hours")
     .add(lateMinute, "minutes");
 
-  console.log(`Current time: ${koreanTime.format("YYYY-MM-DD HH:mm:ss")}`);
-  console.log(
-    `Normal attendance time: ${normalTime.format("YYYY-MM-DD HH:mm:ss")}`
-  );
-  console.log(
-    `Late attendance time: ${lateTime.format("YYYY-MM-DD HH:mm:ss")}`
-  );
-
-  if (koreanTime.isSameOrBefore(normalTime)) {
-    return { status: "present", lateMinutes: 0 };
-  } else if (koreanTime.isBefore(lateTime)) {
-    const lateMinutes = koreanTime.diff(normalTime, "minutes");
-    return { status: "late", lateMinutes };
-  } else {
-    return { status: "absent", lateMinutes: 0 };
+  // 출석 시작 시간 전
+  if (koreanTime.isBefore(startTime)) {
+    return {
+      status: "early",
+      message: "아직 출석 시간이 아닙니다.",
+    };
   }
+
+  // 정상 출석
+  if (koreanTime.isSameOrBefore(normalTime)) {
+    return {
+      status: "present",
+      lateMinutes: 0,
+      message: "정상 출석 처리되었습니다.",
+    };
+  }
+
+  // 지각
+  if (koreanTime.isBefore(lateTime)) {
+    const lateMinutes = koreanTime.diff(normalTime, "minutes");
+    return {
+      status: "late",
+      lateMinutes,
+      message: `지각 처리되었습니다. (${lateMinutes}분 지각)`,
+    };
+  }
+
+  // 결석
+  return {
+    status: "absent",
+    lateMinutes: 0,
+    message: "결석 처리되었습니다.",
+  };
 }
 
+// 출석 처리 API 수정
 app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   try {
     const { encryptedData } = req.body;
 
-    // 암호화된 데이터 복호화
+    // QR 코드 복호화 및 데이터 추출
     const [ivHex, encryptedHex] = encryptedData.split(":");
     const iv = Buffer.from(ivHex, "hex");
     const encrypted = Buffer.from(encryptedHex, "hex");
@@ -646,65 +682,133 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     decrypted = Buffer.concat([decrypted, decipher.final()]);
     const [studentId, timestamp] = decrypted.toString().split("|");
 
-    console.log(`Decrypted timestamp: ${timestamp}`);
-
     // 출석 상태 결정
-    const { status, lateMinutes } = determineAttendanceStatus(timestamp);
+    const attendanceStatus = await determineAttendanceStatus(timestamp);
 
-    console.log(`Determined status: ${status}, Late minutes: ${lateMinutes}`);
+    // 주말이나 휴일인 경우
+    if (["weekend", "holiday", "early"].includes(attendanceStatus.status)) {
+      return res.status(400).json({
+        success: false,
+        message: attendanceStatus.message,
+      });
+    }
 
-    // Check for existing attendance on the same day
-    const today = moment
-      .tz(timestamp, "Asia/Seoul")
-      .startOf("day")
-      .format("YYYY-MM-DD");
-    const tomorrow = moment
-      .tz(timestamp, "Asia/Seoul")
-      .add(1, "days")
-      .startOf("day")
-      .format("YYYY-MM-DD");
+    // 기존 출석 기록 확인
+    const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
+    const tomorrow = moment(today).add(1, "days");
 
     const existingAttendance = await Attendance.findOne({
       studentId,
       timestamp: {
-        $gte: today,
-        $lt: tomorrow,
+        $gte: today.format(),
+        $lt: tomorrow.format(),
       },
     });
 
     if (existingAttendance) {
-      return res
-        .status(400)
-        .json({ message: "이미 오늘 출석이 기록되었습니다." });
+      return res.status(400).json({
+        success: false,
+        message: "이미 오늘 출석이 기록되었습니다.",
+      });
     }
 
-    // 석 기록 생성 및 저장
+    // 새로운 출석 기록 생성
     const attendance = new Attendance({
       studentId,
-      timestamp: timestamp,
-      status,
-      lateMinutes,
+      timestamp,
+      status: attendanceStatus.status,
+      lateMinutes: attendanceStatus.lateMinutes,
     });
 
     await attendance.save();
 
-    console.log(`Saved attendance: ${JSON.stringify(attendance)}`);
-
-    let message;
-    if (status === "present") {
-      message = "출석 처리되었습니다.";
-    } else if (status === "late") {
-      message = `지각 처리되었었습니다. 지각 시간: ${lateMinutes}분`;
-    } else {
-      message = "결석 처리되었습니다.";
-    }
-
-    res.status(201).json({ message, attendance });
+    res.status(201).json({
+      success: true,
+      message: attendanceStatus.message,
+      attendance,
+    });
   } catch (error) {
-    console.error("출석 처리 중 오류 발생:", error);
-    res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    console.error("출석 처리 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "출석 처리 중 오류가 발생했습니다.",
+    });
   }
 });
+
+// 자동 결석 처리 함수 추가
+async function processAutoAbsent() {
+  try {
+    const now = moment().tz("Asia/Seoul");
+    const today = now.startOf("day");
+
+    // 주말 체크
+    if (now.day() === 0 || now.day() === 6) {
+      console.log("주말은 자동 결석 처리를 하지 않습니다.");
+      return;
+    }
+
+    // 휴일 체크
+    const holiday = await Holiday.findOne({
+      date: today.toDate(),
+    });
+
+    if (holiday) {
+      console.log(`휴일(${holiday.reason})은 자동 결석 처리를 하지 않습니다.`);
+      return;
+    }
+
+    // 결석 처리 시간 확인 (9시 이후)
+    const [lateHour, lateMinute] = LATE_ATTENDANCE_TIME.split(":").map(Number);
+    const cutoffTime = today
+      .clone()
+      .add(lateHour, "hours")
+      .add(lateMinute, "minutes");
+
+    if (now.isBefore(cutoffTime)) {
+      console.log("아직 자동 결석 처리 시간이 되지 않았습니다.");
+      return;
+    }
+
+    // 오늘 출석하지 않은 학생들 조회
+    const allStudents = await User.find({
+      isApproved: true,
+      isAdmin: false,
+    });
+
+    const attendedStudents = await Attendance.find({
+      timestamp: {
+        $gte: today.format(),
+        $lt: moment(today).add(1, "day").format(),
+      },
+    }).distinct("studentId");
+
+    const absentStudents = allStudents.filter(
+      (student) => !attendedStudents.includes(student.studentId)
+    );
+
+    // 결석 처리
+    for (const student of absentStudents) {
+      const attendance = new Attendance({
+        studentId: student.studentId,
+        timestamp: now.format(),
+        status: "absent",
+        lateMinutes: 0,
+      });
+      await attendance.save();
+    }
+
+    console.log(
+      `${absentStudents.length}명의 학생이 자동으로 결석 처리되었습니다.`
+    );
+  } catch (error) {
+    console.error("자동 결석 처리 중 오류:", error);
+  }
+}
+
+// 매일 9시에 자동 결석 처리 실행
+const schedule = require("node-schedule");
+schedule.scheduleJob("0 9 * * *", processAutoAbsent);
 
 // 출석 통계 API 개선
 app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
@@ -913,7 +1017,7 @@ async function calculateMonthlyRankings(students, type, limit = 3) {
     })
   );
 
-  // 정렬 및 상위 N개 반���
+  // 정렬 및 상위 N개 반
   return rankings
     .sort((a, b) => {
       if (type === "present") return b.count - a.count;
@@ -1014,7 +1118,7 @@ app.post("/api/refresh-token", async (req, res) => {
       });
     }
 
-    // 새로운 액세스 토큰 생성
+    // 새운 액세스 토큰 생성
     const accessToken = generateAccessToken(user);
 
     // 새로운 리프레시 토큰 생성
@@ -1113,7 +1217,7 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// 월별 통계 계산 함수
+// 월별 통통계 계산 함수
 async function calculateMonthStats(studentId, monthStart) {
   const monthEnd = moment(monthStart).endOf("month");
 
@@ -1437,7 +1541,7 @@ app.get("/api/holidays", verifyToken, async (req, res) => {
     console.error("휴일 목록 조회 중 오류:", error);
     res.status(500).json({
       success: false,
-      message: "휴일 목록 조회 중 오류가 발생했습니다.",
+      message: "휴일 목록 조회 중 오류가 발생했습니큈다.",
     });
   }
 });
