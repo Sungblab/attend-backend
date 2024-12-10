@@ -412,7 +412,7 @@ app.get("/api/student-info", verifyToken, async (req, res) => {
   } catch (error) {
     res
       .status(500)
-      .json({ success: false, message: "서버 오류가 발생했습���다." });
+      .json({ success: false, message: "서버 오류가 발생했습니다." });
   }
 });
 
@@ -1201,7 +1201,7 @@ app.post("/api/refresh-token", async (req, res) => {
       });
     }
 
-    // 사용자 정보 조회
+    // 사용자 ��보 조회
     const user = await User.findById(refreshTokenDoc.userId);
     if (!user) {
       await RefreshToken.deleteOne({ _id: refreshTokenDoc._id });
@@ -1281,7 +1281,7 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
 
       return res.json({
         success: true,
-        message: "인정결석이 새로 등록���었습니다.",
+        message: "인정결석이 새로 등록되었습니다.",
         attendance: newAttendance,
       });
     }
@@ -1649,7 +1649,7 @@ app.get("/api/holidays", verifyToken, async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error("휴일 목록 ���회 중 오류:", error);
+    console.error("휴일 목록 조회 중 오류:", error);
     res.status(500).json({
       success: false,
       message: "휴일 목록 조회 중 오류가 발생했습니다.",
@@ -1676,59 +1676,131 @@ app.delete("/api/holidays/:id", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// 자동 결석 처리 함수 수정
-async function handleAutoAbsent() {
+// 인정결석 삭제 API 추가
+app.delete("/api/attendance/excuse/:id", verifyToken, isAdmin, async (req, res) => {
   try {
-    const now = moment().tz("Asia/Seoul");
-    const today = now.startOf("day");
+    const { id } = req.params;
+    
+    const attendance = await Attendance.findById(id);
+    if (!attendance) {
+      return res.status(404).json({
+        success: false,
+        message: "해당 인정결석 기록을 찾을 수 없습니다."
+      });
+    }
 
-    // 주말인지 확인
-    const isWeekend = now.day() === 0 || now.day() === 6;
+    // 인정결석 상태 제거
+    attendance.isExcused = false;
+    attendance.reason = null;
+    attendance.excusedAt = null;
+    attendance.excusedBy = null;
+    
+    await attendance.save();
 
-    // 휴일인지 확인
-    const isHoliday = await Holiday.findOne({
-      date: today.toDate(),
+    res.json({
+      success: true,
+      message: "인정결석이 취소되었습니다."
+    });
+  } catch (error) {
+    console.error("인정결석 삭제 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "인정결석 삭제 중 오류가 발생했습니다."
+    });
+  }
+});
+
+// 단체 인정결석 처리 API 추가
+app.post("/api/attendance/excuse-group", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const { date, reason, filters } = req.body;
+    
+    if (!date || !reason || !filters) {
+      return res.status(400).json({
+        success: false,
+        message: "날짜, 사유, 필터 조건이 모두 필요합니다."
+      });
+    }
+
+    // 필터 조건에 맞는 학생들 조회
+    let query = { isApproved: true };
+    
+    if (filters.grade) {
+      query.grade = filters.grade;
+    }
+    if (filters.class) {
+      query.class = filters.class;
+    }
+    if (filters.studentIds && filters.studentIds.length > 0) {
+      query.studentId = { $in: filters.studentIds };
+    }
+
+    const students = await User.find(query);
+    
+    if (students.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "조건에 맞는 학생이 없습니다."
+      });
+    }
+
+    const startOfDay = moment.tz(date, "Asia/Seoul").startOf("day");
+    const endOfDay = moment.tz(date, "Asia/Seoul").endOf("day");
+
+    // 각 학생에 대해 인정결석 처리
+    const results = await Promise.all(students.map(async (student) => {
+      // 기존 출석 기록 확인
+      let attendance = await Attendance.findOne({
+        studentId: student.studentId,
+        timestamp: {
+          $gte: startOfDay.format(),
+          $lt: endOfDay.format()
+        }
+      });
+
+      if (!attendance) {
+        // 출석 기록이 없는 경우 새로 생성
+        attendance = new Attendance({
+          studentId: student.studentId,
+          timestamp: startOfDay.format(),
+          status: "absent",
+          isExcused: true,
+          reason,
+          excusedAt: new Date(),
+          excusedBy: req.user.id
+        });
+      } else {
+        // 기존 기록을 인정결석으로 변경
+        attendance.status = "absent";
+        attendance.isExcused = true;
+        attendance.reason = reason;
+        attendance.excusedAt = new Date();
+        attendance.excusedBy = req.user.id;
+      }
+
+      await attendance.save();
+      return {
+        studentId: student.studentId,
+        name: student.name,
+        success: true
+      };
+    }));
+
+    res.json({
+      success: true,
+      message: `${results.length}명의 학생이 인정결석 처리되었습니다.`,
+      results
     });
 
-    // 주말이나 휴일이면 처리하지 않음
-    if (isWeekend || isHoliday) {
-      console.log("오늘은 휴일이므로 자동 결석 처리를 건너뜁니다.");
-      return;
-    }
-
-    // 현재 시간이 9시 이후인지 확인
-    const cutoffTime = now.clone().hour(9).minute(0).second(0);
-    if (now.isBefore(cutoffTime)) {
-      console.log("아직 자동 결석 처리 시간이 되지 않았습니다.");
-      return;
-    }
-
-    // 자동 결석 처리 API 호출
-    const response = await axios.post(
-      "/api/attendance/auto-absent",
-      {},
-      {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      }
-    );
-
-    if (response.data.success) {
-      showToast(
-        `${response.data.count}명의 학생이 결석 처리되었습니다.`,
-        "success"
-      );
-      await fetchAttendanceStats(); // 통계 새로고침
-    }
   } catch (error) {
-    console.error("자동 결석 처리 중 오류:", error);
-    showToast(
-      error.response?.data?.message || "자동 결석 처리 중 오류가 발생했습니다.",
-      "error"
-    );
+    console.error("단체 인정결석 처리 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "단체 인정결석 처리 중 오류가 발생했습니다.",
+      error: error.message
+    });
   }
-}
+});
 
 // 환경 변수 검증 함수
 function validateEnvVariables() {
