@@ -278,43 +278,61 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     const { studentId, password, keepLoggedIn } = req.body;
     const ip = req.ip;
 
-    const user = await User.findOne({ studentId });
-    if (!user) {
-      incrementLoginAttempts(ip);
+    // 입력값 검증
+    if (!studentId || !password) {
       return res.status(400).json({
         success: false,
-        message: "존재하지 않는 학번입니다.",
+        message: "학번과 비밀번호를 모두 입력해주세요."
       });
     }
 
+    // 사용자 찾기
+    const user = await User.findOne({ studentId });
+    if (!user) {
+      incrementLoginAttempts(ip);
+      return res.status(401).json({
+        success: false,
+        message: "존재하지 않는 학번입니다."
+      });
+    }
+
+    // 계정 승인 여부 확인
+    if (!user.isApproved) {
+      return res.status(403).json({
+        success: false,
+        message: "아직 승인되지 않은 계정입니다. 관리자의 승인을 기다려주세요."
+      });
+    }
+
+    // 비밀번호 확인
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       incrementLoginAttempts(ip);
-      return res.status(400).json({
+      return res.status(401).json({
         success: false,
-        message: "비밀번호가 일치하지 않습니다.",
+        message: "비밀번호가 일치하지 않습니다."
       });
     }
 
     // 로그인 성공 시 시도 횟수 초기화
     loginAttempts.delete(ip);
 
-    // 액세스 토큰 생성
+    // 토큰 생성
     const accessToken = generateAccessToken(user);
-
-    // 리프레시 토큰 생성
     const refreshToken = generateRefreshToken();
+
+    // 리프레시 토큰 저장
     const refreshTokenDoc = new RefreshToken({
       userId: user._id,
       token: refreshToken,
-      expiresAt: new Date(Date.now() + getRefreshTokenExpiresIn(keepLoggedIn)),
+      expiresAt: new Date(Date.now() + getRefreshTokenExpiresIn(keepLoggedIn))
     });
 
-    // 기존 리프레시 토큰 삭제
+    // 기존 리프레시 토큰 삭제 후 새로 저장
     await RefreshToken.deleteMany({ userId: user._id });
     await refreshTokenDoc.save();
 
-    // 응답에 토큰과 사용자 정보 포함
+    // 응답
     res.json({
       success: true,
       accessToken,
@@ -324,15 +342,16 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
         studentId: user.studentId,
         name: user.name,
         isAdmin: user.isAdmin,
-        isReader: user.isReader,
+        isReader: user.isReader
       },
-      redirectUrl: user.isAdmin || user.isReader ? "/hub.html" : "/qr.html",
+      redirectUrl: user.isAdmin || user.isReader ? "/hub.html" : "/qr.html"
     });
+
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({
       success: false,
-      message: "서버 오류가 발생했습니다.",
+      message: "서버 오류가 발생했습니다."
     });
   }
 });
@@ -590,7 +609,7 @@ const AttendanceSchema = new mongoose.Schema({
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
 // 출석 시간 상수 추가 (server.js 파일 상단에 추가)
-const ATTENDANCE_START_TIME = "08:30"; // 출석 시작 ��간
+const ATTENDANCE_START_TIME = "08:30"; // 출석 시작 시간
 const NORMAL_ATTENDANCE_TIME = "08:40"; // 정상 출석 마감 시간
 const LATE_ATTENDANCE_TIME = "09:00"; // 지각 마감 시간
 
@@ -683,12 +702,12 @@ async function determineAttendanceStatus(timestamp) {
       success: true,
     };
   } catch (error) {
-    console.error("출석 상태 결정 중 오류:", error);
+    console.error("출석 상태 결정 중 ��류:", error);
     throw error;
   }
 }
 
-// 출석 처리 API 수��
+// 출석 처리 API 수정
 app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   try {
     const { encryptedData } = req.body;
@@ -724,7 +743,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 
       // 복호화된 데이터 검증 추가
       if (!studentId || !timestamp) {
-        throw new Error("QR 코드 데이터 형식이 올바르지 않습니다.");
+        throw new Error("QR 코드 데이터 형식이 올바르지 않습���다.");
       }
 
       // 학생 정보 조회
@@ -872,7 +891,7 @@ async function processAutoAbsent() {
   }
 }
 
-// 매일 9시에 자�� 결석 처리 실행
+// 매일 9시에 자동 결석 처리 실행
 const schedule = require("node-schedule");
 schedule.scheduleJob("0 9 * * *", processAutoAbsent);
 
@@ -1352,7 +1371,7 @@ function calculateImprovement(lastMonth, thisMonth) {
   // 가중치 적용
   improvement =
     attendanceImprovement * 0.4 + // 출률 개선 40%
-    lateReduction * 0.2 + // 지각 횟수 감소 20%
+    lateReduction * 0.2 + // 지각 ���수 감소 20%
     lateMinutesReduction * 0.2 + // 지각 시간 감소 20%
     absentReduction * 0.2; // 결석 감소 20%
 
@@ -1671,7 +1690,7 @@ async function handleAutoAbsent() {
     // 현재 시간이 9시 이후인지 확인
     const cutoffTime = now.clone().hour(9).minute(0).second(0);
     if (now.isBefore(cutoffTime)) {
-      console.log("아직 자동 결석 처리 시간이 되지 않았습니다.");
+      console.log("아직 ���동 결석 처리 시간이 되지 않았습니다.");
       return;
     }
 
