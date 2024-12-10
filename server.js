@@ -625,11 +625,7 @@ const LATE_ATTENDANCE_TIME = "09:00"; // 지각 마감 시간
 // determineAttendanceStatus 함수 수정
 async function determineAttendanceStatus(timestamp) {
   try {
-    const koreanTime = moment.tz(
-      timestamp,
-      "YYYY-MM-DD HH:mm:ss",
-      "Asia/Seoul"
-    );
+    const koreanTime = moment.tz(timestamp, "YYYY-MM-DD HH:mm:ss", "Asia/Seoul");
     const currentDate = koreanTime.clone().startOf("day");
 
     // 주말 체크
@@ -654,27 +650,21 @@ async function determineAttendanceStatus(timestamp) {
       };
     }
 
-    const [startHour, startMinute] =
-      ATTENDANCE_START_TIME.split(":").map(Number);
-    const [normalHour, normalMinute] =
-      NORMAL_ATTENDANCE_TIME.split(":").map(Number);
+    // 시간 비교를 위해 현재 날짜의 시작 시간들을 설정
+    const [startHour, startMinute] = ATTENDANCE_START_TIME.split(":").map(Number);
+    const [normalHour, normalMinute] = NORMAL_ATTENDANCE_TIME.split(":").map(Number);
     const [lateHour, lateMinute] = LATE_ATTENDANCE_TIME.split(":").map(Number);
 
-    const startTime = currentDate
-      .clone()
-      .add(startHour, "hours")
-      .add(startMinute, "minutes");
-    const normalTime = currentDate
-      .clone()
-      .add(normalHour, "hours")
-      .add(normalMinute, "minutes");
-    const lateTime = currentDate
-      .clone()
-      .add(lateHour, "hours")
-      .add(lateMinute, "minutes");
+    // 현재 시간을 분 단위로 변환
+    const currentMinutes = koreanTime.hours() * 60 + koreanTime.minutes();
+    
+    // 각 기준 시간을 분 단위로 변환
+    const startMinutes = startHour * 60 + startMinute;
+    const normalMinutes = normalHour * 60 + normalMinute;
+    const lateMinutes = lateHour * 60 + lateMinute;
 
     // 출석 시작 시간 전
-    if (koreanTime.isBefore(startTime)) {
+    if (currentMinutes < startMinutes) {
       return {
         status: "early",
         message: "아직 출석 시간이 아닙니다.",
@@ -683,7 +673,7 @@ async function determineAttendanceStatus(timestamp) {
     }
 
     // 정상 출석
-    if (koreanTime.isSameOrBefore(normalTime)) {
+    if (currentMinutes <= normalMinutes) {
       return {
         status: "present",
         lateMinutes: 0,
@@ -693,12 +683,12 @@ async function determineAttendanceStatus(timestamp) {
     }
 
     // 지각
-    if (koreanTime.isBefore(lateTime)) {
-      const lateMinutes = koreanTime.diff(normalTime, "minutes");
+    if (currentMinutes < lateMinutes) {
+      const minutesLate = currentMinutes - normalMinutes;
       return {
         status: "late",
-        lateMinutes,
-        message: `지각 처리되었습니다. (${lateMinutes}분 지각)`,
+        lateMinutes: minutesLate,
+        message: `지각 처리되었습니다. (${minutesLate}분 지각)`,
         success: true,
       };
     }
