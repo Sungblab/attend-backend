@@ -252,16 +252,18 @@ const checkLoginAttempts = async (req, res, next) => {
     timestamp: Date.now(),
   };
 
+  // 최대 시도 횟수를 10회로 늘리고, 잠금 시간을 5분으로 설정
+  const MAX_ATTEMPTS = process.env.MAX_LOGIN_ATTEMPTS || 50;  // 기본값 10회
+  const LOCKOUT_TIME = process.env.LOGIN_LOCKOUT_TIME || 5 * 60 * 1000;  // 기본값 5분
+
   // 잠금 시간이 지났는지 확인
-  if (currentAttempts.count >= process.env.MAX_LOGIN_ATTEMPTS) {
-    const lockoutTime = parseInt(process.env.LOGIN_LOCKOUT_TIME);
-    if (Date.now() - currentAttempts.timestamp < lockoutTime) {
+  if (currentAttempts.count >= MAX_ATTEMPTS) {
+    const timeSinceLock = Date.now() - currentAttempts.timestamp;
+    if (timeSinceLock < LOCKOUT_TIME) {
       return res.status(429).json({
         success: false,
         message: "너무 많은 로그인 시도. 잠시 후 다시 시도해주세요.",
-        remainingTime: Math.ceil(
-          (lockoutTime - (Date.now() - currentAttempts.timestamp)) / 1000
-        ),
+        remainingTime: Math.ceil((LOCKOUT_TIME - timeSinceLock) / 1000),
       });
     } else {
       // 잠금 시간이 지났으면 초기화
@@ -358,12 +360,19 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
 
 // 로그인 시도 횟수 증가 함수
 function incrementLoginAttempts(ip) {
+  const MAX_ATTEMPTS = process.env.MAX_LOGIN_ATTEMPTS || 10;
   const currentAttempts = loginAttempts.get(ip) || {
     count: 0,
     timestamp: Date.now(),
   };
-  currentAttempts.count += 1;
-  currentAttempts.timestamp = Date.now();
+
+  // 최대 시도 횟수에 도달하면 타임스탬프 갱신
+  if (currentAttempts.count >= MAX_ATTEMPTS) {
+    currentAttempts.timestamp = Date.now();
+  } else {
+    currentAttempts.count += 1;
+  }
+
   loginAttempts.set(ip, currentAttempts);
 }
 
@@ -403,7 +412,7 @@ app.get("/api/student-info", verifyToken, async (req, res) => {
   } catch (error) {
     res
       .status(500)
-      .json({ success: false, message: "서버 오류가 발생했습니다." });
+      .json({ success: false, message: "서버 오류가 발생했습���다." });
   }
 });
 
@@ -702,7 +711,7 @@ async function determineAttendanceStatus(timestamp) {
       success: true,
     };
   } catch (error) {
-    console.error("출석 상태 결정 중 ��류:", error);
+    console.error("출석 상태 결정 중 오류:", error);
     throw error;
   }
 }
@@ -743,7 +752,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 
       // 복호화된 데이터 검증 추가
       if (!studentId || !timestamp) {
-        throw new Error("QR 코드 데이터 형식이 올바르지 않습���다.");
+        throw new Error("QR 코드 데이터 형식이 올바르지 않습니다.");
       }
 
       // 학생 정보 조회
@@ -1272,7 +1281,7 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
 
       return res.json({
         success: true,
-        message: "인정결석이 새로 등록되었습니다.",
+        message: "인정결석이 새로 등록���었습니다.",
         attendance: newAttendance,
       });
     }
@@ -1328,9 +1337,9 @@ async function calculateMonthStats(studentId, monthStart) {
             (attendances.filter((a) => a.status === "present" || a.isExcused)
               .length /
               attendances.length) *
-            100
-          ).toFixed(1)
-        : 0,
+              100
+            ).toFixed(1)
+          : 0,
   };
 }
 
@@ -1371,7 +1380,7 @@ function calculateImprovement(lastMonth, thisMonth) {
   // 가중치 적용
   improvement =
     attendanceImprovement * 0.4 + // 출률 개선 40%
-    lateReduction * 0.2 + // 지각 ���수 감소 20%
+    lateReduction * 0.2 + // 지각 수 감소 20%
     lateMinutesReduction * 0.2 + // 지각 시간 감소 20%
     absentReduction * 0.2; // 결석 감소 20%
 
@@ -1589,7 +1598,7 @@ app.post("/api/holidays", verifyToken, isAdmin, async (req, res) => {
     if (existingHoliday) {
       return res.status(400).json({
         success: false,
-        message: "이미 등록된 휴일입니다.",
+        message: "이미 등록된 휴일입니���.",
       });
     }
 
@@ -1640,7 +1649,7 @@ app.get("/api/holidays", verifyToken, async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error("휴일 목록 조회 중 오류:", error);
+    console.error("휴일 목록 ���회 중 오류:", error);
     res.status(500).json({
       success: false,
       message: "휴일 목록 조회 중 오류가 발생했습니다.",
@@ -1690,7 +1699,7 @@ async function handleAutoAbsent() {
     // 현재 시간이 9시 이후인지 확인
     const cutoffTime = now.clone().hour(9).minute(0).second(0);
     if (now.isBefore(cutoffTime)) {
-      console.log("아직 ���동 결석 처리 시간이 되지 않았습니다.");
+      console.log("아직 자동 결석 처리 시간이 되지 않았습니다.");
       return;
     }
 
