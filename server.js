@@ -618,8 +618,8 @@ const AttendanceSchema = new mongoose.Schema({
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
 
 // 출석 시간 상수 추가 (server.js 파일 상단에 추가)
-const ATTENDANCE_START_TIME = "08:30"; // 출석 시작 시간
-const NORMAL_ATTENDANCE_TIME = "08:40"; // 정상 출석 마감 시간
+const ATTENDANCE_START_TIME = "07:30"; // 출석 시작 시간
+const NORMAL_ATTENDANCE_TIME = "08:03"; // 정상 출석 마감 시간
 const LATE_ATTENDANCE_TIME = "09:00"; // 지각 마감 시간
 
 // determineAttendanceStatus 함수 수정
