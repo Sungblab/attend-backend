@@ -711,24 +711,25 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   try {
     const { encryptedData } = req.body;
 
-    // 데이터 유효성 검사 강화
+    // 데이터 유효성 검사
     if (!encryptedData || typeof encryptedData !== "string") {
-      return res.status(400).json({
+      return res.json({
         success: false,
         message: "유효하지 않은 QR 코드 데이터입니다.",
       });
     }
 
-    // QR 코드 형식 검사 추가
+    // QR 코드 형식 검사
     const [ivHex, encryptedHex] = encryptedData.split(":");
     if (!ivHex || !encryptedHex) {
-      return res.status(400).json({
+      return res.json({
         success: false,
         message: "잘못된 QR 코드 형식입니다.",
       });
     }
 
     try {
+      // QR 코드 복호화
       const iv = Buffer.from(ivHex.trim(), "hex");
       const encrypted = Buffer.from(encryptedHex.trim(), "hex");
       const decipher = crypto.createDecipheriv(
@@ -740,33 +741,19 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       decrypted = Buffer.concat([decrypted, decipher.final()]);
       const [studentId, timestamp] = decrypted.toString().split("|");
 
-      // 복호화된 데이터 검증 추가
-      if (!studentId || !timestamp) {
-        throw new Error("QR 코드 데이터 형식이 올바르지 않습니다.");
-      }
-
       // 학생 정보 조회
       const student = await User.findOne({ studentId });
       if (!student) {
-        return res.status(400).json({
+        return res.json({
           success: false,
           message: "등록되지 않은 학생입니다.",
         });
       }
 
-      // 출석 상태 결정
-      const attendanceStatus = await determineAttendanceStatus(timestamp);
-      if (!attendanceStatus.success) {
-        return res.status(400).json({
-          success: false,
-          message: attendanceStatus.message,
-        });
-      }
-
-      // 기존 출석 기록 확인
+      // 당일 출석 여부 확인
       const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
       const tomorrow = moment(today).add(1, "days");
-
+      
       const existingAttendance = await Attendance.findOne({
         studentId,
         timestamp: {
@@ -776,11 +763,26 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       });
 
       if (existingAttendance) {
-        return res.status(400).json({
+        return res.json({
           success: false,
           message: "이미 오늘 출석이 기록되었습니다.",
           attendance: {
-            ...existingAttendance.toObject(),
+            studentId: student.studentId,
+            name: student.name,
+            status: existingAttendance.status,
+            timestamp: existingAttendance.timestamp,
+          },
+        });
+      }
+
+      // 출석 상태 결정
+      const attendanceStatus = await determineAttendanceStatus(timestamp);
+      if (!attendanceStatus.success) {
+        return res.json({
+          success: false,
+          message: attendanceStatus.message,
+          attendance: {
+            studentId: student.studentId,
             name: student.name,
           },
         });
@@ -796,26 +798,29 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 
       await attendance.save();
 
-      res.status(201).json({
+      return res.json({
         success: true,
         message: attendanceStatus.message,
         attendance: {
-          ...attendance.toObject(),
+          studentId: student.studentId,
           name: student.name,
+          status: attendance.status,
+          lateMinutes: attendance.lateMinutes,
+          timestamp: attendance.timestamp,
         },
       });
+
     } catch (cryptoError) {
-      console.error("복호화 오류:", cryptoError);
-      return res.status(400).json({
+      return res.json({
         success: false,
         message: "QR 코드 복호화에 실패했습니다.",
       });
     }
   } catch (error) {
     console.error("출석 처리 중 오류:", error);
-    return res.status(500).json({
+    return res.json({
       success: false,
-      message: error.message || "출석 처리 중 오류가 발생했습니다.",
+      message: "출석 처리 중 오류가 발생했습니다.",
     });
   }
 });
@@ -1177,7 +1182,7 @@ app.post("/api/refresh-token", async (req, res) => {
       });
     }
 
-    // 리프레시 토�� 검증
+    // 리프레시 토큰 검증
     const refreshTokenDoc = await RefreshToken.findOne({
       token: refreshToken,
       expiresAt: { $gt: new Date() },
@@ -1334,7 +1339,7 @@ async function calculateMonthStats(studentId, monthStart) {
 function calculateImprovement(lastMonth, thisMonth) {
   let improvement = 0;
 
-  // ���석률 개선
+  // 출석률 개선
   const attendanceImprovement =
     thisMonth.attendanceRate - lastMonth.attendanceRate;
 
@@ -1464,7 +1469,7 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
       });
     }
 
-    // 오늘의 출석 상태
+    // 오늘의 출석 상���
     const today = moment().tz("Asia/Seoul").startOf("day");
     const todayAttendance = await Attendance.findOne({
       studentId,
@@ -1510,7 +1515,7 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
     console.error("학생별 통계 조회 중 오류:", error);
     res.status(500).json({
       success: false,
-      message: "통계 조회 중 오류가 발생했습니다.",
+      message: "통계 조회 �� 오류가 발생했습니다.",
       error: error.message,
     });
   }
@@ -1640,7 +1645,7 @@ app.get("/api/holidays", verifyToken, async (req, res) => {
     console.error("휴일 목록 조회 중 오류:", error);
     res.status(500).json({
       success: false,
-      message: "��일 목록 조회 중 오류가 발생했습니다.",
+      message: "휴일 목록 조회 중 오류가 발생했습니다.",
     });
   }
 });
@@ -1735,7 +1740,7 @@ app.post("/api/attendance/excuse-group", verifyToken, isAdmin, async (req, res) 
     const startOfDay = moment.tz(date, "Asia/Seoul").startOf("day");
     const endOfDay = moment.tz(date, "Asia/Seoul").endOf("day");
 
-    // 각 학생에 대해 인정결석 처리
+    // 각 학생에 대해 인정결�� 처리
     const results = await Promise.all(students.map(async (student) => {
       // 기존 출석 기록 확인
       let attendance = await Attendance.findOne({
