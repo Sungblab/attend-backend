@@ -655,7 +655,7 @@ async function determineAttendanceStatus(timestamp) {
     const [normalHour, normalMinute] = NORMAL_ATTENDANCE_TIME.split(":").map(Number);
     const [lateHour, lateMinute] = LATE_ATTENDANCE_TIME.split(":").map(Number);
 
-    // 현재 시간을 분 단위로 변환
+    // 현재 시간을 분 단위로 변환 - 한국 시간 기준
     const currentMinutes = koreanTime.hours() * 60 + koreanTime.minutes();
     
     // 각 기준 시간을 분 단위로 변환
@@ -701,7 +701,7 @@ async function determineAttendanceStatus(timestamp) {
       success: true,
     };
   } catch (error) {
-    console.error("출석 상태 결정 중 오류:", error);
+    console.error("출석 상태 결정 ��� 오류:", error);
     throw error;
   }
 }
@@ -750,15 +750,15 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
         });
       }
 
-      // 당일 출석 여부 확인
-      const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
+      // 당일 출석 여부 확인 - 시간대 처리 개선
+      const today = moment().tz("Asia/Seoul").startOf("day");
       const tomorrow = moment(today).add(1, "days");
       
       const existingAttendance = await Attendance.findOne({
         studentId,
         timestamp: {
-          $gte: today.format(),
-          $lt: tomorrow.format(),
+          $gte: today.format("YYYY-MM-DD HH:mm:ss"),
+          $lt: tomorrow.format("YYYY-MM-DD HH:mm:ss"),
         },
       });
 
@@ -771,6 +771,8 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
             name: student.name,
             status: existingAttendance.status,
             timestamp: existingAttendance.timestamp,
+            isExcused: existingAttendance.isExcused,
+            lateMinutes: existingAttendance.lateMinutes,
           },
         });
       }
@@ -1469,7 +1471,7 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
       });
     }
 
-    // 오늘의 출석 상���
+    // 오늘의 출석 상
     const today = moment().tz("Asia/Seoul").startOf("day");
     const todayAttendance = await Attendance.findOne({
       studentId,
@@ -1515,7 +1517,7 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
     console.error("학생별 통계 조회 중 오류:", error);
     res.status(500).json({
       success: false,
-      message: "통계 조회 �� 오류가 발생했습니다.",
+      message: "통계 조회 중 오류가 발생했습니다.",
       error: error.message,
     });
   }
@@ -1740,7 +1742,7 @@ app.post("/api/attendance/excuse-group", verifyToken, isAdmin, async (req, res) 
     const startOfDay = moment.tz(date, "Asia/Seoul").startOf("day");
     const endOfDay = moment.tz(date, "Asia/Seoul").endOf("day");
 
-    // 각 학생에 대해 인정결�� 처리
+    // 각 학생에 대해 인정결 처리
     const results = await Promise.all(students.map(async (student) => {
       // 기존 출석 기록 확인
       let attendance = await Attendance.findOne({
@@ -1786,7 +1788,7 @@ app.post("/api/attendance/excuse-group", verifyToken, isAdmin, async (req, res) 
     });
 
   } catch (error) {
-    console.error("단체 인정결석 처리 중 오류:", error);
+    console.error("���체 인정결석 처리 중 오류:", error);
     res.status(500).json({
       success: false,
       message: "단체 인정결석 처리 중 오류가 발생했습니다.",
