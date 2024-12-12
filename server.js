@@ -701,7 +701,7 @@ async function determineAttendanceStatus(timestamp) {
       success: true,
     };
   } catch (error) {
-    console.error("출석 상태 결정 ��� 오류:", error);
+    console.error("출석 상태 결정 중 오류:", error);
     throw error;
   }
 }
@@ -835,7 +835,7 @@ async function processAutoAbsent() {
 
     // 주말 체크
     if (now.day() === 0 || now.day() === 6) {
-      console.log("주말 자동 결석 처리를 하지 않습니다.");
+      console.log("주말 자�� 결석 처리를 하지 않습니다.");
       return;
     }
 
@@ -993,8 +993,8 @@ app.get("/api/attendance/stats", verifyToken, isAdmin, async (req, res) => {
         const todayAttendance = await Attendance.findOne({
           studentId: student.studentId,
           timestamp: {
-            $gte: today.format(),
-            $lt: moment(today).add(1, "day").format(),
+            $gte: today.format("YYYY-MM-DD"),
+            $lt: moment(today).add(1, "day").format("YYYY-MM-DD")
           },
         });
 
@@ -1413,7 +1413,7 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
       ? moment.tz(endDate, "Asia/Seoul").endOf("day")
       : moment().tz("Asia/Seoul").endOf("day");
 
-    // 출석 기록 조회
+    // 출석 기록 ��회
     const attendances = await Attendance.find({
       studentId,
       timestamp: {
@@ -1476,8 +1476,8 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
     const todayAttendance = await Attendance.findOne({
       studentId,
       timestamp: {
-        $gte: today.format(),
-        $lt: moment(today).add(1, "day").format(),
+        $gte: today.format("YYYY-MM-DD"),
+        $lt: moment(today).add(1, "day").format("YYYY-MM-DD")
       },
     });
 
@@ -1788,7 +1788,7 @@ app.post("/api/attendance/excuse-group", verifyToken, isAdmin, async (req, res) 
     });
 
   } catch (error) {
-    console.error("���체 인정결석 처리 중 오류:", error);
+    console.error("단체 인정결석 처리 중 오류:", error);
     res.status(500).json({
       success: false,
       message: "단체 인정결석 처리 중 오류가 발생했습니다.",
