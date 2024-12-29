@@ -335,10 +335,10 @@ const checkLoginAttempts = async (req, res, next) => {
 // 로그인 라우트에 미들웨어 적용
 app.post("/api/login", checkLoginAttempts, async (req, res) => {
   try {
-    const { studentId, password, keepLoggedIn, deviceId, isWeb } = req.body;
+    const { studentId, password, deviceInfo } = req.body;
     const ip = req.ip;
 
-    // 입력값 검증 - 웹 접속인 경우 deviceId 불필요
+    // 입력값 검증 - 웹 접속인 경우 deviceInfo 불필요
     if (!studentId || !password) {
       return res.status(400).json({
         success: false,
@@ -375,8 +375,8 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     }
 
     // 앱에서 접속한 경우에만 디바이스 확인
-    if (!isWeb && deviceId) {
-      const existingDevice = await Device.findOne({ deviceId });
+    if (deviceInfo && deviceInfo.deviceId) {
+      const existingDevice = await Device.findOne({ deviceId: deviceInfo.deviceId });
       if (existingDevice && existingDevice.userId.toString() !== user._id.toString()) {
         return res.status(403).json({
           success: false,
@@ -386,9 +386,15 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
 
       // 새 디바이스 등록 또는 업데이트
       await Device.findOneAndUpdate(
-        { deviceId },
+        { deviceId: deviceInfo.deviceId },
         {
           userId: user._id,
+          deviceInfo: {
+            model: deviceInfo.model,
+            platform: deviceInfo.platform,
+            version: deviceInfo.version,
+            isEmulator: deviceInfo.isEmulator,
+          },
           lastLogin: new Date(),
         },
         { upsert: true }
@@ -409,11 +415,9 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
       expiresAt: new Date(Date.now() + getRefreshTokenExpiresIn(keepLoggedIn)),
     });
 
-    // 기존 리프레시 토큰 삭제 후 새로 저장
     await RefreshToken.deleteMany({ userId: user._id });
     await refreshTokenDoc.save();
 
-    // 응답
     res.json({
       success: true,
       accessToken,
@@ -425,7 +429,6 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
         isAdmin: user.isAdmin,
         isReader: user.isReader,
       },
-      redirectUrl: user.isAdmin || user.isReader ? "/hub.html" : "/qr.html",
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -3008,6 +3011,12 @@ app.get("/api/admin/users/:userId", verifyToken, isAdmin, async (req, res) => {
 const DeviceSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   deviceId: { type: String, required: true },
+  deviceInfo: {
+    model: String,
+    platform: String,
+    version: String,
+    isEmulator: Boolean,
+  },
   lastLogin: { type: Date, default: Date.now },
 });
 
