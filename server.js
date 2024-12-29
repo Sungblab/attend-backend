@@ -335,11 +335,11 @@ const checkLoginAttempts = async (req, res, next) => {
 // 로그인 라우트에 미들웨어 적용
 app.post("/api/login", checkLoginAttempts, async (req, res) => {
   try {
-    const { studentId, password, keepLoggedIn, deviceId } = req.body;
+    const { studentId, password, keepLoggedIn, deviceId, isWeb } = req.body;
     const ip = req.ip;
 
-    // 입력값 검증
-    if (!studentId || !password || !deviceId) {
+    // 입력값 검증 - 웹 접속인 경우 deviceId 불필요
+    if (!studentId || !password) {
       return res.status(400).json({
         success: false,
         message: "필수 정보가 누락되었습니다.",
@@ -374,27 +374,26 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
       });
     }
 
-    // 디바이스 확인
-    const existingDevice = await Device.findOne({ deviceId });
-    if (
-      existingDevice &&
-      existingDevice.userId.toString() !== user._id.toString()
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: "이 기기는 이미 다른 계정에 등록되어 있습니다.",
-      });
-    }
+    // 앱에서 접속한 경우에만 디바이스 확인
+    if (!isWeb && deviceId) {
+      const existingDevice = await Device.findOne({ deviceId });
+      if (existingDevice && existingDevice.userId.toString() !== user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: "이 기기는 이미 다른 계정에 등록되어 있습니다.",
+        });
+      }
 
-    // 새 디바이스 등록 또는 업데이트
-    await Device.findOneAndUpdate(
-      { deviceId },
-      {
-        userId: user._id,
-        lastLogin: new Date(),
-      },
-      { upsert: true }
-    );
+      // 새 디바이스 등록 또는 업데이트
+      await Device.findOneAndUpdate(
+        { deviceId },
+        {
+          userId: user._id,
+          lastLogin: new Date(),
+        },
+        { upsert: true }
+      );
+    }
 
     // 로그인 성공 시 시도 횟수 초기화
     loginAttempts.delete(ip);
