@@ -376,15 +376,30 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
 
     // 앱에서 접속한 경우에만 디바이스 확인
     if (deviceInfo && deviceInfo.deviceId) {
-      const existingDevice = await Device.findOne({ deviceId: deviceInfo.deviceId });
+      // 디바이스 ID 디코딩 추가
+      let decodedDeviceId;
+      try {
+        const buff = Buffer.from(deviceInfo.deviceId, 'base64');
+        decodedDeviceId = buff.toString('utf-8');
+      } catch (error) {
+        console.error('Device ID decode error:', error);
+      }
+
+      const existingDevice = await Device.findOne({ 
+        $or: [
+          { deviceId: deviceInfo.deviceId },
+          { deviceId: decodedDeviceId }
+        ]
+      });
+
       if (existingDevice && existingDevice.userId.toString() !== user._id.toString()) {
         return res.status(403).json({
           success: false,
-          message: "이 기기는 이미 다른 계정에 등록되어 있습니다.",
+          message: "이 기기는 이미 다른 계정에 등록되어 있습니다."
         });
       }
 
-      // 새 디바이스 등록 또는 업데이트
+      // 디바이스 정보 업데이트
       await Device.findOneAndUpdate(
         { deviceId: deviceInfo.deviceId },
         {
@@ -394,8 +409,8 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
             platform: deviceInfo.platform,
             version: deviceInfo.version,
             isEmulator: deviceInfo.isEmulator,
-          },
-          lastLogin: new Date(),
+            lastLogin: new Date()
+          }
         },
         { upsert: true }
       );
@@ -3010,14 +3025,14 @@ app.get("/api/admin/users/:userId", verifyToken, isAdmin, async (req, res) => {
 // 디바이스 스키마 추가
 const DeviceSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  deviceId: { type: String, required: true },
+  deviceId: { type: String, required: true, unique: true },
   deviceInfo: {
     model: String,
     platform: String,
     version: String,
     isEmulator: Boolean,
-  },
-  lastLogin: { type: Date, default: Date.now },
+    lastLogin: { type: Date, default: Date.now }  // lastLogin을 deviceInfo 내부로 이동
+  }
 });
 
 DeviceSchema.index({ deviceId: 1 }, { unique: true });
