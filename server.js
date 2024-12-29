@@ -79,6 +79,8 @@ const UserSchema = new mongoose.Schema({
   // 담당 학년과 반 추가
   teacherGrade: { type: Number, enum: [1, 2, 3] },
   teacherClass: { type: Number, min: 1, max: 6 },
+  deviceId: { type: String },  // deviceId 필드 추가
+  device: { type: mongoose.Schema.Types.ObjectId, ref: 'Device' }  // Device 모델 참조 추가
 });
 
 const User = mongoose.model("User", UserSchema);
@@ -335,10 +337,10 @@ const checkLoginAttempts = async (req, res, next) => {
 // 로그인 라우트에 미들웨어 적용
 app.post("/api/login", checkLoginAttempts, async (req, res) => {
   try {
-    const { studentId, password, deviceInfo, keepLoggedIn = false } = req.body; // keepLoggedIn 추가
+    const { studentId, password, deviceInfo = null, keepLoggedIn = false } = req.body; // deviceInfo의 기본값을 null로 설정
     const ip = req.ip;
 
-    // 입력값 검증 - 웹 접속인 경우 deviceInfo 불필요
+    // 입력값 검증
     if (!studentId || !password) {
       return res.status(400).json({
         success: false,
@@ -374,46 +376,50 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
       });
     }
 
-    // 앱에서 접속한 경우에만 디바이스 확인
+    // 앱에서 접속한 경우에만 디바이스 확인 (deviceInfo가 null이 아닐 때)
     if (deviceInfo && deviceInfo.deviceId) {
-      // 디바이스 ID 디코딩 추가
-      let decodedDeviceId;
       try {
+        // 디바이스 ID 디코딩
         const buff = Buffer.from(deviceInfo.deviceId, 'base64');
-        decodedDeviceId = buff.toString('utf-8');
-      } catch (error) {
-        console.error('Device ID decode error:', error);
-      }
-
-      const existingDevice = await Device.findOne({ 
-        $or: [
-          { deviceId: deviceInfo.deviceId },
-          { deviceId: decodedDeviceId }
-        ]
-      });
-
-      if (existingDevice && existingDevice.userId.toString() !== user._id.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: "이 기기는 이미 다른 계정에 등록되어 있습니다."
+        const decodedDeviceInfo = JSON.parse(buff.toString('utf-8'));
+        
+        // 기존 디바이스 확인
+        const existingDevice = await Device.findOne({ 
+          deviceId: deviceInfo.deviceId,
+          userId: { $ne: user._id } // 현재 사용자의 것이 아닌 경우만 체크
         });
-      }
 
-      // 디바이스 정보 업데이트
-      await Device.findOneAndUpdate(
-        { deviceId: deviceInfo.deviceId },
-        {
-          userId: user._id,
-          deviceInfo: {
-            model: deviceInfo.model,
-            platform: deviceInfo.platform,
-            version: deviceInfo.version,
-            isEmulator: deviceInfo.isEmulator,
-            lastLogin: new Date()
-          }
-        },
-        { upsert: true }
-      );
+        if (existingDevice) {
+          return res.status(403).json({
+            success: false,
+            message: "이 기기는 이미 다른 계정에 등록되어 있습니다."
+          });
+        }
+        
+        // 디바이스 정보 업데이트 또는 생성
+        const device = await Device.findOneAndUpdate(
+          { userId: user._id },
+          {
+            deviceId: deviceInfo.deviceId,
+            deviceInfo: {
+              model: decodedDeviceInfo.model,
+              platform: decodedDeviceInfo.osName,
+              version: decodedDeviceInfo.osVersion.toString(),
+              isEmulator: !decodedDeviceInfo.isDevice,
+              lastLogin: new Date()
+            }
+          },
+          { upsert: true, new: true }
+        );
+
+        // User 모델에도 디바이스 정보 연결
+        user.deviceId = deviceInfo.deviceId;
+        user.device = device._id;
+        await user.save();
+      } catch (error) {
+        console.error('Device info processing error:', error);
+        // 디바이스 처리 실패는 로그인 자체를 막지 않도록 함
+      }
     }
 
     // 로그인 성공 시 시도 횟수 초기화
@@ -423,7 +429,7 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
 
-    // 리프레시 토큰 저장 - keepLoggedIn 값 사용
+    // 리프레시 토큰 저장
     const refreshTokenDoc = new RefreshToken({
       userId: user._id,
       token: refreshToken,
@@ -3009,13 +3015,23 @@ app.get(
 app.get("/api/admin/users/:userId", verifyToken, isAdmin, async (req, res) => {
   try {
     const { userId } = req.params;
-    const user = await User.findById(userId).select("-password");
+    const user = await User.findById(userId)
+      .select("-password")
+      .populate('device'); // device 정보를 함께 가져옴
 
     if (!user) {
       return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
     }
 
-    res.json(user);
+    // 디바이스 정보가 있는 경우 응답에 포함
+    const device = await Device.findOne({ userId: user._id });
+    const responseData = {
+      ...user.toObject(),
+      deviceInfo: device ? device.deviceInfo : null,
+      deviceId: device ? device.deviceId : null
+    };
+
+    res.json(responseData);
   } catch (error) {
     console.error("Error fetching user:", error);
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
@@ -3050,35 +3066,16 @@ app.delete("/api/device", verifyToken, async (req, res) => {
       });
     }
 
-    // deviceId를 디코드하여 원래 정보 추출
-    let decodedDeviceId;
-    try {
-      const buff = Buffer.from(deviceId, 'base64');
-      decodedDeviceId = buff.toString('utf-8');
-      console.log('Decoded device info:', decodedDeviceId);
-    } catch (error) {
-      console.error('Device ID decode error:', error);
-    }
-
-    // 디바이스 찾기 시도
-    const device = await Device.findOne({ 
-      $or: [
-        { deviceId },
-        { 'deviceInfo.deviceId': deviceId }
-      ]
-    });
-
+    // 디바이스 찾기
+    const device = await Device.findOne({ deviceId });
     if (!device) {
       return res.status(404).json({
         success: false,
-        message: "등록되지 않은 디바이스입니다.",
-        debug: { 
-          requestedDeviceId: deviceId,
-          decodedInfo: decodedDeviceId 
-        }
+        message: "등록되지 않은 디바이스입니다."
       });
     }
 
+    // 권한 확인
     if (device.userId.toString() !== req.user.id) {
       return res.status(403).json({
         success: false,
@@ -3086,12 +3083,13 @@ app.delete("/api/device", verifyToken, async (req, res) => {
       });
     }
 
-    await Device.deleteOne({ 
-      $or: [
-        { deviceId },
-        { 'deviceInfo.deviceId': deviceId }
-      ]
+    // User 모델에서 디바이스 참조 제거
+    await User.findByIdAndUpdate(device.userId, {
+      $unset: { deviceId: "", device: "" }
     });
+
+    // 디바이스 삭제
+    await Device.deleteOne({ deviceId });
 
     res.json({
       success: true,
