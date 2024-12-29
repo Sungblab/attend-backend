@@ -337,7 +337,7 @@ const checkLoginAttempts = async (req, res, next) => {
 // 로그인 라우트에 미들웨어 적용
 app.post("/api/login", checkLoginAttempts, async (req, res) => {
   try {
-    const { studentId, password, deviceInfo = null, keepLoggedIn = false } = req.body; // deviceInfo의 기본값을 null로 설정
+    const { studentId, password, deviceInfo = null, keepLoggedIn = false, isWeb = false } = req.body;
     const ip = req.ip;
 
     // 입력값 검증
@@ -376,8 +376,8 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
       });
     }
 
-    // 앱에서 접속한 경우에만 디바이스 확인 (deviceInfo가 null이 아닐 때)
-    if (deviceInfo && deviceInfo.deviceId) {
+    // 웹이 아닌 앱에서 접속한 경우에만 디바이스 확인
+    if (!isWeb && deviceInfo && deviceInfo.deviceId) {
       try {
         // 디바이스 ID 디코딩
         const buff = Buffer.from(deviceInfo.deviceId, 'base64');
@@ -386,7 +386,7 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
         // 기존 디바이스 확인
         const existingDevice = await Device.findOne({ 
           deviceId: deviceInfo.deviceId,
-          userId: { $ne: user._id } // 현재 사용자의 것이 아닌 경우만 체크
+          userId: { $ne: user._id }
         });
 
         if (existingDevice) {
@@ -418,7 +418,6 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
         await user.save();
       } catch (error) {
         console.error('Device info processing error:', error);
-        // 디바이스 처리 실패는 로그인 자체를 막지 않도록 함
       }
     }
 
@@ -439,10 +438,14 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     await RefreshToken.deleteMany({ userId: user._id });
     await refreshTokenDoc.save();
 
+    // 리다이렉트 URL 설정
+    const redirectUrl = user.isAdmin || user.isReader ? '/hub.html' : '/qr.html';
+
     res.json({
       success: true,
       accessToken,
       refreshToken,
+      redirectUrl,
       user: {
         id: user._id,
         studentId: user.studentId,
