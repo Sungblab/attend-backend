@@ -3023,7 +3023,7 @@ const DeviceSchema = new mongoose.Schema({
 DeviceSchema.index({ deviceId: 1 }, { unique: true });
 const Device = mongoose.model("Device", DeviceSchema);
 
-// 디바이스 등록 해제 API 추가
+// 디바이스 등록 해제 API 수정
 app.delete("/api/device", verifyToken, async (req, res) => {
   try {
     const { deviceId } = req.body;
@@ -3035,12 +3035,32 @@ app.delete("/api/device", verifyToken, async (req, res) => {
       });
     }
 
-    const device = await Device.findOne({ deviceId });
+    // deviceId를 디코드하여 원래 정보 추출
+    let decodedDeviceId;
+    try {
+      const buff = Buffer.from(deviceId, 'base64');
+      decodedDeviceId = buff.toString('utf-8');
+      console.log('Decoded device info:', decodedDeviceId);
+    } catch (error) {
+      console.error('Device ID decode error:', error);
+    }
+
+    // 디바이스 찾기 시도
+    const device = await Device.findOne({ 
+      $or: [
+        { deviceId },
+        { 'deviceInfo.deviceId': deviceId }
+      ]
+    });
 
     if (!device) {
       return res.status(404).json({
         success: false,
         message: "등록되지 않은 디바이스입니다.",
+        debug: { 
+          requestedDeviceId: deviceId,
+          decodedInfo: decodedDeviceId 
+        }
       });
     }
 
@@ -3051,7 +3071,12 @@ app.delete("/api/device", verifyToken, async (req, res) => {
       });
     }
 
-    await Device.deleteOne({ deviceId });
+    await Device.deleteOne({ 
+      $or: [
+        { deviceId },
+        { 'deviceInfo.deviceId': deviceId }
+      ]
+    });
 
     res.json({
       success: true,
@@ -3062,7 +3087,7 @@ app.delete("/api/device", verifyToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "서버 오류가 발생했습니다.",
+      error: error.message
     });
   }
 });
-1;
