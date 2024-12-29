@@ -335,14 +335,14 @@ const checkLoginAttempts = async (req, res, next) => {
 // 로그인 라우트에 미들웨어 적용
 app.post("/api/login", checkLoginAttempts, async (req, res) => {
   try {
-    const { studentId, password, keepLoggedIn } = req.body;
+    const { studentId, password, keepLoggedIn, deviceId } = req.body;
     const ip = req.ip;
 
     // 입력값 검증
-    if (!studentId || !password) {
+    if (!studentId || !password || !deviceId) {
       return res.status(400).json({
         success: false,
-        message: "학번과 비밀번호를 모두 입력해주세요.",
+        message: "필수 정보가 누락되었습니다.",
       });
     }
 
@@ -373,6 +373,28 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
         message: "비밀번호가 일치하지 않습니다.",
       });
     }
+
+    // 디바이스 확인
+    const existingDevice = await Device.findOne({ deviceId });
+    if (
+      existingDevice &&
+      existingDevice.userId.toString() !== user._id.toString()
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "이 기기는 이미 다른 계정에 등록되어 있습니다.",
+      });
+    }
+
+    // 새 디바이스 등록 또는 업데이트
+    await Device.findOneAndUpdate(
+      { deviceId },
+      {
+        userId: user._id,
+        lastLogin: new Date(),
+      },
+      { upsert: true }
+    );
 
     // 로그인 성공 시 시도 횟수 초기화
     loginAttempts.delete(ip);
@@ -2982,3 +3004,57 @@ app.get("/api/admin/users/:userId", verifyToken, isAdmin, async (req, res) => {
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
   }
 });
+
+// 디바이스 스키마 추가
+const DeviceSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  deviceId: { type: String, required: true },
+  lastLogin: { type: Date, default: Date.now },
+});
+
+DeviceSchema.index({ deviceId: 1 }, { unique: true });
+const Device = mongoose.model("Device", DeviceSchema);
+
+// 디바이스 등록 해제 API 추가
+app.delete("/api/device", verifyToken, async (req, res) => {
+  try {
+    const { deviceId } = req.body;
+
+    if (!deviceId) {
+      return res.status(400).json({
+        success: false,
+        message: "디바이스 ID가 필요합니다.",
+      });
+    }
+
+    const device = await Device.findOne({ deviceId });
+
+    if (!device) {
+      return res.status(404).json({
+        success: false,
+        message: "등록되지 않은 디바이스입니다.",
+      });
+    }
+
+    if (device.userId.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: "이 디바이스를 해제할 권한이 없습니다.",
+      });
+    }
+
+    await Device.deleteOne({ deviceId });
+
+    res.json({
+      success: true,
+      message: "디바이스가 성공적으로 해제되었습니다.",
+    });
+  } catch (error) {
+    console.error("Device unregister error:", error);
+    res.status(500).json({
+      success: false,
+      message: "서버 오류가 발생했습니다.",
+    });
+  }
+});
+1;
