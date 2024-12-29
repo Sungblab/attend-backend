@@ -1525,14 +1525,15 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
     }
 
     // 해당 날짜의 출석 기록 찾기
-    const startOfDay = moment.tz(date, "Asia/Seoul").startOf("day");
-    const endOfDay = moment.tz(date, "Asia/Seoul").endOf("day");
+    const targetDate = moment.tz(date, "YYYY-MM-DD", "Asia/Seoul");
+    const startOfDay = targetDate.format("YYYY-MM-DD 00:00:00");
+    const endOfDay = targetDate.format("YYYY-MM-DD 23:59:59");
 
     let attendance = await Attendance.findOne({
       studentId,
       timestamp: {
-        $gte: startOfDay.format(),
-        $lt: endOfDay.format(),
+        $gte: startOfDay,
+        $lt: endOfDay,
       },
     });
 
@@ -1540,21 +1541,22 @@ app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
       // 출석 기록이 없는 경우 새로 생성
       attendance = new Attendance({
         studentId,
-        timestamp: startOfDay.format(),
+        timestamp: targetDate.format("YYYY-MM-DD HH:mm:ss"),
         status: "absent",
         isExcused: true,
         reason,
-        excusedAt: new Date(),
+        excusedAt: moment().tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss"),
         excusedBy: req.user.id,
       });
     } else {
       // 기존 출석 기록을 인정결석으로 변경
-      // 기존 상태와 관계없이 인정결석으로 덮어쓰기
-      attendance.status = "absent"; // 상태를 결석으로 설정
-      attendance.isExcused = true; // 인정결석 표시
+      attendance.status = "absent";
+      attendance.isExcused = true;
       attendance.reason = reason;
-      attendance.lateMinutes = 0; // 지각 시간 초기화
-      attendance.excusedAt = new Date();
+      attendance.lateMinutes = 0;
+      attendance.excusedAt = moment()
+        .tz("Asia/Seoul")
+        .format("YYYY-MM-DD HH:mm:ss");
       attendance.excusedBy = req.user.id;
     }
 
