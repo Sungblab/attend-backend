@@ -335,7 +335,7 @@ const checkLoginAttempts = async (req, res, next) => {
 // 로그인 라우트에 미들웨어 적용
 app.post("/api/login", checkLoginAttempts, async (req, res) => {
   try {
-    const { studentId, password, deviceInfo } = req.body;
+    const { studentId, password, deviceInfo, keepLoggedIn = false } = req.body; // keepLoggedIn 추가
     const ip = req.ip;
 
     // 입력값 검증 - 웹 접속인 경우 deviceInfo 불필요
@@ -423,7 +423,7 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken();
 
-    // 리프레시 토큰 저장
+    // 리프레시 토큰 저장 - keepLoggedIn 값 사용
     const refreshTokenDoc = new RefreshToken({
       userId: user._id,
       token: refreshToken,
