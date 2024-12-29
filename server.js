@@ -2224,12 +2224,21 @@ app.use(helmet.xssFilter());
 app.use(helmet.noSniff());
 
 // CORS 설정 강화
+// app.use(
+//   cors({
+//     origin:
+//       process.env.NODE_ENV === "production"
+//         ? ["https://attendhs.netlify.app"]
+//         : ["http://localhost:5500"],
+//     methods: ["GET", "POST", "PUT", "DELETE"],
+//     allowedHeaders: ["Content-Type", "Authorization"],
+//     credentials: true,
+//   })
+// );
+
 app.use(
   cors({
-    origin:
-      process.env.NODE_ENV === "production"
-        ? ["https://attendhs.netlify.app"]
-        : ["http://localhost:5500"],
+    origin: true, // 모든 origin 허용
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
