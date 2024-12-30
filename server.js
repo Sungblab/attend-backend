@@ -79,8 +79,8 @@ const UserSchema = new mongoose.Schema({
   // 담당 학년과 반 추가
   teacherGrade: { type: Number, enum: [1, 2, 3] },
   teacherClass: { type: Number, min: 1, max: 6 },
-  deviceId: { type: String },  // deviceId 필드 추가
-  device: { type: mongoose.Schema.Types.ObjectId, ref: 'Device' }  // Device 모델 참조 추가
+  deviceId: { type: String }, // deviceId 필드 추가
+  device: { type: mongoose.Schema.Types.ObjectId, ref: "Device" }, // Device 모델 참조 추가
 });
 
 const User = mongoose.model("User", UserSchema);
@@ -337,7 +337,13 @@ const checkLoginAttempts = async (req, res, next) => {
 // 로그인 라우트에 미들웨어 적용
 app.post("/api/login", checkLoginAttempts, async (req, res) => {
   try {
-    const { studentId, password, deviceInfo = null, keepLoggedIn = false, isWeb = false } = req.body;
+    const {
+      studentId,
+      password,
+      deviceInfo = null,
+      keepLoggedIn = false,
+      isWeb = false,
+    } = req.body;
     const ip = req.ip;
 
     // 입력값 검증
@@ -380,22 +386,22 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     if (!isWeb && deviceInfo && deviceInfo.deviceId) {
       try {
         // 디바이스 ID 디코딩
-        const buff = Buffer.from(deviceInfo.deviceId, 'base64');
-        const decodedDeviceInfo = JSON.parse(buff.toString('utf-8'));
-        
+        const buff = Buffer.from(deviceInfo.deviceId, "base64");
+        const decodedDeviceInfo = JSON.parse(buff.toString("utf-8"));
+
         // 기존 디바이스 확인
-        const existingDevice = await Device.findOne({ 
+        const existingDevice = await Device.findOne({
           deviceId: deviceInfo.deviceId,
-          userId: { $ne: user._id }
+          userId: { $ne: user._id },
         });
 
         if (existingDevice) {
           return res.status(403).json({
             success: false,
-            message: "이 기기는 이미 다른 계정에 등록되어 있습니다."
+            message: "이 기기는 이미 다른 계정에 등록되어 있습니다.",
           });
         }
-        
+
         // 디바이스 정보 업데이트 또는 생성
         const device = await Device.findOneAndUpdate(
           { userId: user._id },
@@ -406,8 +412,8 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
               platform: decodedDeviceInfo.osName,
               version: decodedDeviceInfo.osVersion.toString(),
               isEmulator: !decodedDeviceInfo.isDevice,
-              lastLogin: new Date()
-            }
+              lastLogin: new Date(),
+            },
           },
           { upsert: true, new: true }
         );
@@ -417,7 +423,7 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
         user.device = device._id;
         await user.save();
       } catch (error) {
-        console.error('Device info processing error:', error);
+        console.error("Device info processing error:", error);
       }
     }
 
@@ -439,7 +445,8 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     await refreshTokenDoc.save();
 
     // 리다이렉트 URL 설정
-    const redirectUrl = user.isAdmin || user.isReader ? '/hub.html' : '/qr.html';
+    const redirectUrl =
+      user.isAdmin || user.isReader ? "/hub.html" : "/qr.html";
 
     res.json({
       success: true,
@@ -1046,6 +1053,7 @@ async function processAutoAbsent() {
       .add(lateHour, "hours")
       .add(lateMinute, "minutes");
 
+    // 현재 시간이 지각 마감 시간을 지났는지 확인
     if (now.isBefore(cutoffTime)) {
       logger.info("아직 자동 결석 처리 시간이 되지 않았습니다.");
       return;
@@ -3020,7 +3028,7 @@ app.get("/api/admin/users/:userId", verifyToken, isAdmin, async (req, res) => {
     const { userId } = req.params;
     const user = await User.findById(userId)
       .select("-password")
-      .populate('device'); // device 정보를 함께 가져옴
+      .populate("device"); // device 정보를 함께 가져옴
 
     if (!user) {
       return res.status(404).json({ message: "사용자를 찾을 수 없습니다." });
@@ -3031,7 +3039,7 @@ app.get("/api/admin/users/:userId", verifyToken, isAdmin, async (req, res) => {
     const responseData = {
       ...user.toObject(),
       deviceInfo: device ? device.deviceInfo : null,
-      deviceId: device ? device.deviceId : null
+      deviceId: device ? device.deviceId : null,
     };
 
     res.json(responseData);
@@ -3050,8 +3058,8 @@ const DeviceSchema = new mongoose.Schema({
     platform: String,
     version: String,
     isEmulator: Boolean,
-    lastLogin: { type: Date, default: Date.now }  // lastLogin을 deviceInfo 내부로 이동
-  }
+    lastLogin: { type: Date, default: Date.now }, // lastLogin을 deviceInfo 내부로 이동
+  },
 });
 
 DeviceSchema.index({ deviceId: 1 }, { unique: true });
@@ -3074,7 +3082,7 @@ app.delete("/api/device", verifyToken, async (req, res) => {
     if (!device) {
       return res.status(404).json({
         success: false,
-        message: "등록되지 않은 디바이스입니다."
+        message: "등록되지 않은 디바이스입니다.",
       });
     }
 
@@ -3088,7 +3096,7 @@ app.delete("/api/device", verifyToken, async (req, res) => {
 
     // User 모델에서 디바이스 참조 제거
     await User.findByIdAndUpdate(device.userId, {
-      $unset: { deviceId: "", device: "" }
+      $unset: { deviceId: "", device: "" },
     });
 
     // 디바이스 삭제
@@ -3103,7 +3111,7 @@ app.delete("/api/device", verifyToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "서버 오류가 발생했습니다.",
-      error: error.message
+      error: error.message,
     });
   }
 });
