@@ -1306,7 +1306,7 @@ app.post(
   isAdmin,
   async (req, res) => {
     try {
-      const now = moment();
+      const now = moment().tz("Asia/Seoul");
       const today = now.format("YYYY-MM-DD");
       const currentTime = now.format("HH:mm:ss");
 
@@ -1339,7 +1339,7 @@ app.post(
 
       const attendedStudents = await Attendance.find({
         timestamp: {
-          $gte: today.format("YYYY-MM-DD 00:00:00"),
+          $gte: `${today} 00:00:00`,
           $lt: moment(today).add(1, "day").format("YYYY-MM-DD 00:00:00"),
         },
       }).distinct("studentId");
