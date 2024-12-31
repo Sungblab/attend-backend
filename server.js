@@ -1168,6 +1168,17 @@ async function processAutoAbsent() {
   }
 }
 
+// ProcessLog 모델 수정
+const ProcessLogSchema = new mongoose.Schema({
+  type: { type: String, required: true },
+  processDate: { type: String, required: true }, // YYYY-MM-DD 형식
+  processTime: { type: String, required: true }, // HH:mm:ss 형식
+  processedCount: { type: Number, required: true },
+  details: { type: String },
+});
+
+const ProcessLog = mongoose.model("ProcessLog", ProcessLogSchema);
+
 // 수동 지각 처리 API
 app.post(
   "/api/attendance/process-late",
@@ -1299,6 +1310,13 @@ app.post(
       const today = now.format("YYYY-MM-DD");
       const currentTime = now.format("HH:mm:ss");
 
+      // 디버그 정보 로깅
+      console.log("요청 정보:", {
+        body: req.body,
+        user: req.user,
+        timestamp: now.format(),
+      });
+
       // 휴일 체크
       const holiday = await Holiday.findOne({
         date: now.startOf("day").toDate(),
@@ -1355,6 +1373,7 @@ app.post(
             message: `${student.studentId} (${student.name}) - 결석 처리 완료`,
           });
         } catch (error) {
+          console.error(`학생 ${student.studentId} 결석 처리 중 오류:`, error);
           results.failedCount++;
           results.details.push({
             success: false,
@@ -1378,10 +1397,11 @@ app.post(
         ...results,
       });
     } catch (error) {
-      logger.error("수동 결석 처리 중 오류:", error);
+      console.error("결석 처리 중 오류:", error);
       res.status(500).json({
         success: false,
         message: "결석 처리 중 오류가 발생했습니다.",
+        error: error.message,
       });
     }
   }
@@ -3419,14 +3439,3 @@ app.delete("/api/device", verifyToken, async (req, res) => {
     });
   }
 });
-
-// ProcessLog 모델 수정
-const ProcessLogSchema = new mongoose.Schema({
-  type: { type: String, required: true },
-  processDate: { type: String, required: true }, // YYYY-MM-DD 형식
-  processTime: { type: String, required: true }, // HH:mm:ss 형식
-  processedCount: { type: Number, required: true },
-  details: { type: String },
-});
-
-const ProcessLog = mongoose.model("ProcessLog", ProcessLogSchema);
