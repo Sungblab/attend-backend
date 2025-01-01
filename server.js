@@ -314,7 +314,7 @@ const checkLoginAttempts = async (req, res, next) => {
   };
 
   // 최대 시도 횟수를 10회로 늘리고, 잠금 시간을 5분으로 설정
-  const MAX_ATTEMPTS = process.env.MAX_LOGIN_ATTEMPTS || 50; // 기본값 10회
+  const MAX_ATTEMPTS = process.env.MAX_LOGIN_ATTEMPTS || 50;
   const LOCKOUT_TIME = process.env.LOGIN_LOCKOUT_TIME || 5 * 60 * 1000; // 기본값 5분
 
   // 잠금 시간이 지났는지 확인
@@ -470,24 +470,6 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     });
   }
 });
-
-// 로그인 시도 횟수 증가 함수
-function incrementLoginAttempts(ip) {
-  const MAX_ATTEMPTS = process.env.MAX_LOGIN_ATTEMPTS || 10;
-  const currentAttempts = loginAttempts.get(ip) || {
-    count: 0,
-    timestamp: Date.now(),
-  };
-
-  // 최대 시도 횟수에 도달하면 타임스탬프 갱신
-  if (currentAttempts.count >= MAX_ATTEMPTS) {
-    currentAttempts.timestamp = Date.now();
-  } else {
-    currentAttempts.count += 1;
-  }
-
-  loginAttempts.set(ip, currentAttempts);
-}
 
 app.post("/api/change-password", verifyToken, async (req, res) => {
   try {
