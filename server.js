@@ -1040,10 +1040,6 @@ async function processAutoAbsent() {
     const currentTime = now.format("HH:mm:ss");
 
     logger.info(`[자동 결석 처리] 시작 - ${today} ${currentTime}`);
-    logger.info(`[자동 결석 처리] 서버 시간대: ${process.env.TZ}`);
-    logger.info(
-      `[자동 결석 처리] 현재 시간: ${now.format("YYYY-MM-DD HH:mm:ss")}`
-    );
 
     // 주말인 경우 처리하지 않음
     if (now.day() === 0 || now.day() === 6) {
@@ -1087,25 +1083,23 @@ async function processAutoAbsent() {
       .split(":")
       .map(Number);
 
-    // 현재 시간과 자동 결석 처리 시간 비교
-    const autoAbsentTime = now.clone().set({
-      hour: autoAbsentHour,
-      minute: autoAbsentMinute,
-      second: 0,
-    });
+    // 현재 시간을 분으로 변환하여 비교
+    const currentHour = now.hours();
+    const currentMinute = now.minutes();
+    const currentTotalMinutes = currentHour * 60 + currentMinute;
+    const autoAbsentTotalMinutes = autoAbsentHour * 60 + autoAbsentMinute;
 
-    logger.info(`[자동 결석 처리] 디버그 - now: ${now.format()}`);
     logger.info(
-      `[자동 결석 처리] 디버그 - autoAbsentTime: ${autoAbsentTime.format()}`
+      `[자동 결석 처리] 디버그 - 현재 시간(분): ${currentTotalMinutes}`
     );
     logger.info(
-      `[자동 결석 처리] 디버그 - isBefore 결과: ${now.isBefore(autoAbsentTime)}`
+      `[자동 결석 처리] 디버그 - 설정 시간(분): ${autoAbsentTotalMinutes}`
     );
 
-    if (now.isBefore(autoAbsentTime)) {
+    if (currentTotalMinutes < autoAbsentTotalMinutes) {
       logger.info(
         `[자동 결석 처리] 현재 시간(${now.format(
-          "YYYY-MM-DD HH:mm:ss"
+          "HH:mm"
         )})이 자동 결석 처리 시간(${settings.autoAbsentTime})보다 이릅니다.`
       );
       return;
