@@ -1035,7 +1035,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 // 자동 결석 처리 함수 수정
 async function processAutoAbsent() {
   try {
-    const now = getCurrentKoreanTime();
+    const now = moment().tz("Asia/Seoul");
     const today = now.format("YYYY-MM-DD");
     const currentTime = now.format("HH:mm:ss");
 
