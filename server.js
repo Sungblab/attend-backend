@@ -1070,7 +1070,7 @@ async function processAutoAbsent() {
 
     // 출석 설정 가져오기
     const settings = await AttendanceSettings.findOne().sort({ updatedAt: -1 });
-    if (!settings) {
+    if (!settings || !settings.autoAbsentTime) {
       logger.error("[자동 결석 처리] 출석 설정을 찾을 수 없습니다.");
       return;
     }
