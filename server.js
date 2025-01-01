@@ -1087,11 +1087,14 @@ async function processAutoAbsent() {
       .split(":")
       .map(Number);
 
-    // 현재 시간이 자동 결석 처리 시간을 지났는지 확인
-    const currentMinutes = now.hours() * 60 + now.minutes();
-    const autoAbsentMinutes = autoAbsentHour * 60 + autoAbsentMinute;
+    // 현재 시간과 자동 결석 처리 시간 비교
+    const autoAbsentTime = now.clone().set({
+      hour: autoAbsentHour,
+      minute: autoAbsentMinute,
+      second: 0,
+    });
 
-    if (currentMinutes < autoAbsentMinutes) {
+    if (now.isBefore(autoAbsentTime)) {
       logger.info(
         `[자동 결석 처리] 현재 시간(${now.format(
           "HH:mm"
