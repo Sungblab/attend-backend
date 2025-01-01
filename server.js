@@ -1543,6 +1543,10 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
       });
     }
 
+    // 기존 설정 삭제 (선택적)
+    await AttendanceSettings.deleteMany({});
+
+    // 새로운 설정 저장
     const settings = new AttendanceSettings({
       startTime,
       normalTime,
@@ -1553,8 +1557,12 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
 
     await settings.save();
 
-    // 자동 결석 처리 스케줄 재설정
+    // 자동 결석 처리 스케줄 즉시 재설정
     await setupAutoAbsentSchedule();
+
+    logger.info(
+      `[설정] 출결 설정이 업데이트되었습니다. 자동 결석 처리 시간: ${autoAbsentTime}`
+    );
 
     res.json({
       success: true,
@@ -1569,7 +1577,7 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("출결 설정 업데이트 중 오류:", error);
+    logger.error("출결 설정 업데이트 중 오류:", error);
     res.status(500).json({
       success: false,
       message: "출결 설정 업데이트 중 오류가 발생했습니다.",
@@ -3554,76 +3562,6 @@ app.get("/api/settings/attendance", verifyToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "출결 설정 조회 중 오류가 발생했습니다.",
-    });
-  }
-});
-
-// 출결 설정 업데이트 API
-app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
-  try {
-    const { startTime, normalTime, lateTime, autoAbsentTime } = req.body;
-
-    // 시간 형식 검증 (HH:mm)
-    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-    if (
-      !timeRegex.test(startTime) ||
-      !timeRegex.test(normalTime) ||
-      !timeRegex.test(lateTime) ||
-      !timeRegex.test(autoAbsentTime)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "잘못된 시간 형식입니다. (HH:mm)",
-      });
-    }
-
-    // 시간 순서 검증
-    const start = moment(startTime, "HH:mm");
-    const normal = moment(normalTime, "HH:mm");
-    const late = moment(lateTime, "HH:mm");
-    const autoAbsent = moment(autoAbsentTime, "HH:mm");
-
-    if (
-      start.isAfter(normal) ||
-      normal.isAfter(late) ||
-      late.isAfter(autoAbsent)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "시간 순서가 올바르지 않습니다.",
-      });
-    }
-
-    const settings = new AttendanceSettings({
-      startTime,
-      normalTime,
-      lateTime,
-      autoAbsentTime,
-      updatedBy: req.user.id,
-    });
-
-    await settings.save();
-
-    // 자동 결석 처리 스케줄 재설정
-    await setupAutoAbsentSchedule();
-
-    res.json({
-      success: true,
-      message: "출결 설정이 업데이트되었습니다.",
-      settings: {
-        startTime: settings.startTime,
-        normalTime: settings.normalTime,
-        lateTime: settings.lateTime,
-        autoAbsentTime: settings.autoAbsentTime,
-        updatedAt: settings.updatedAt,
-        updatedBy: req.user.name,
-      },
-    });
-  } catch (error) {
-    console.error("출결 설정 업데이트 중 오류:", error);
-    res.status(500).json({
-      success: false,
-      message: "출결 설정 업데이트 중 오류가 발생했습니다.",
     });
   }
 });
