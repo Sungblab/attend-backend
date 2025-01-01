@@ -1030,7 +1030,7 @@ moment.tz.setDefault("Asia/Seoul");
 // 자동 결석 처리 함수 수정
 async function processAutoAbsent() {
   try {
-    const now = moment();
+    const now = moment().tz("Asia/Seoul");
     const today = now.format("YYYY-MM-DD");
     const currentTime = now.format("HH:mm:ss");
 
