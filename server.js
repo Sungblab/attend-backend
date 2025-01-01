@@ -1072,40 +1072,7 @@ async function processAutoAbsent() {
       return;
     }
 
-    // 출석 설정 가져오기
-    const settings = await AttendanceSettings.findOne().sort({ updatedAt: -1 });
-    if (!settings) {
-      logger.error("[자동 결석 처리] 출석 설정을 찾을 수 없습니다.");
-      return;
-    }
-
-    const [autoAbsentHour, autoAbsentMinute] = settings.autoAbsentTime
-      .split(":")
-      .map(Number);
-
-    // 현재 시간을 분으로 변환하여 비교
-    const currentHour = now.hours();
-    const currentMinute = now.minutes();
-    const currentTotalMinutes = currentHour * 60 + currentMinute;
-    const autoAbsentTotalMinutes = autoAbsentHour * 60 + autoAbsentMinute;
-
-    logger.info(
-      `[자동 결석 처리] 디버그 - 현재 시간(분): ${currentTotalMinutes}`
-    );
-    logger.info(
-      `[자동 결석 처리] 디버그 - 설정 시간(분): ${autoAbsentTotalMinutes}`
-    );
-
-    if (currentTotalMinutes < autoAbsentTotalMinutes) {
-      logger.info(
-        `[자동 결석 처리] 현재 시간(${now.format(
-          "HH:mm"
-        )})이 자동 결석 처리 시간(${settings.autoAbsentTime})보다 이릅니다.`
-      );
-      return;
-    }
-
-    // 오늘 출석하지 않은 학생들 조회
+    // 출늘 출석하지 않은 학생들 조회
     const allStudents = await User.find({
       isApproved: true,
       isAdmin: false,
