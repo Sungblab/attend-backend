@@ -2658,12 +2658,24 @@ app.get("/api/settings/attendance", verifyToken, async (req, res) => {
       .populate("updatedBy", "name");
 
     if (!settings) {
-      settings = new AttendanceSettings({
+      const defaultSettings = new AttendanceSettings({
         startTime: "07:30",
         normalTime: "08:03",
         lateTime: "09:00",
+        autoAbsentTime: "09:00",
       });
-      await settings.save();
+      await defaultSettings.save();
+      return res.json({
+        success: true,
+        settings: {
+          startTime: defaultSettings.startTime,
+          normalTime: defaultSettings.normalTime,
+          lateTime: defaultSettings.lateTime,
+          autoAbsentTime: defaultSettings.autoAbsentTime,
+          updatedAt: defaultSettings.updatedAt,
+          updatedBy: null,
+        },
+      });
     }
 
     res.json({
@@ -2672,6 +2684,7 @@ app.get("/api/settings/attendance", verifyToken, async (req, res) => {
         startTime: settings.startTime,
         normalTime: settings.normalTime,
         lateTime: settings.lateTime,
+        autoAbsentTime: settings.autoAbsentTime,
         updatedAt: settings.updatedAt,
         updatedBy: settings.updatedBy?.name,
       },
