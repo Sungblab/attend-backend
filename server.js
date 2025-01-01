@@ -1407,15 +1407,26 @@ async function setupAutoAbsentSchedule() {
     }
 
     const settings = await AttendanceSettings.findOne().sort({ updatedAt: -1 });
-    if (!settings) {
+    if (!settings || !settings.autoAbsentTime) {
       logger.error(
         "[스케줄러] 출석 설정을 찾을 수 없어 기본값으로 스케줄을 설정합니다."
       );
+      const defaultSettings = new AttendanceSettings({
+        startTime: "07:30",
+        normalTime: "08:03",
+        lateTime: "09:00",
+        autoAbsentTime: "09:00",
+      });
+      await defaultSettings.save();
       autoAbsentJob = schedule.scheduleJob("0 9 * * 1-5", processAutoAbsent);
       logger.info(
         "[스케줄러] 자동 결석 처리 스케줄이 기본값(09:00, 월-금)으로 설정되었습니다."
       );
-      return;
+      return {
+        success: true,
+        message: "자동 결석 처리 시간이 기본값(09:00)으로 설정되었습니다.",
+        nextInvocation: autoAbsentJob.nextInvocation(),
+      };
     }
 
     const [hour, minute] = settings.autoAbsentTime.split(":").map(Number);
@@ -1451,14 +1462,6 @@ async function setupAutoAbsentSchedule() {
   } catch (error) {
     logger.error(
       "[스케줄러] 자동 결석 처리 스케줄 설정 중 오류: " + error.message
-    );
-    // 오류 발생 시 기본값으로 설정
-    if (autoAbsentJob) {
-      autoAbsentJob.cancel();
-    }
-    autoAbsentJob = schedule.scheduleJob("0 9 * * 1-5", processAutoAbsent);
-    logger.info(
-      "[스케줄러] 오류로 인해 기본값(09:00, 월-금)으로 스케줄이 설정되었습니다."
     );
     throw error;
   }
