@@ -1030,11 +1030,11 @@ moment.tz.setDefault("Asia/Seoul");
 // 자동 결석 처리 함수 수정
 async function processAutoAbsent() {
   try {
-    const now = moment().tz("Asia/Seoul");
+    const now = moment();
     const today = now.format("YYYY-MM-DD");
     const currentTime = now.format("HH:mm:ss");
 
-    logger.info(`[자동 결석 처리] 시작 - ${today} ${currentTime} (KST)`);
+    logger.info(`[자동 결석 처리] 시작 - ${today} ${currentTime}`);
     logger.info(`[자동 결석 처리] 서버 시간대: ${process.env.TZ}`);
 
     // 주말인 경우 처리하지 않음
@@ -1085,7 +1085,9 @@ async function processAutoAbsent() {
 
     if (currentMinutes < autoAbsentMinutes) {
       logger.info(
-        "[자동 결석 처리] 아직 자동 결석 처리 시간이 되지 않았습니다."
+        `[자동 결석 처리] 현재 시간(${now.format(
+          "HH:mm"
+        )})이 자동 결석 처리 시간(${settings.autoAbsentTime})보다 이릅니다.`
       );
       return;
     }
@@ -1098,8 +1100,6 @@ async function processAutoAbsent() {
       isTeacher: false,
     });
 
-    logger.info(`[자동 결석 처리] 전체 학생 수: ${allStudents.length}명`);
-
     const attendedStudents = await Attendance.find({
       timestamp: {
         $gte: moment(today).startOf("day").format(),
@@ -1107,42 +1107,24 @@ async function processAutoAbsent() {
       },
     }).distinct("studentId");
 
-    logger.info(
-      `[자동 결석 처리] 이미 출석한 학생 수: ${attendedStudents.length}명`
-    );
-
     const absentStudents = allStudents.filter(
       (student) => !attendedStudents.includes(student.studentId)
-    );
-
-    logger.info(
-      `[자동 결석 처리] 결석 처리할 학생 수: ${absentStudents.length}명`
     );
 
     // 결석 처리
     let processedCount = 0;
     for (const student of absentStudents) {
-      const existingAttendance = await Attendance.findOne({
+      const attendance = new Attendance({
         studentId: student.studentId,
-        timestamp: {
-          $gte: moment(today).startOf("day").format(),
-          $lt: moment(today).add(1, "day").startOf("day").format(),
-        },
+        timestamp: now.format(),
+        status: "absent",
+        lateMinutes: 0,
       });
-
-      if (!existingAttendance) {
-        const attendance = new Attendance({
-          studentId: student.studentId,
-          timestamp: now.format(),
-          status: "absent",
-          lateMinutes: 0,
-        });
-        await attendance.save();
-        processedCount++;
-        logger.info(
-          `[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 결석 처리 완료`
-        );
-      }
+      await attendance.save();
+      processedCount++;
+      logger.info(
+        `[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 결석 처리 완료`
+      );
     }
 
     // 처리 로그 저장
