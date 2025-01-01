@@ -1173,8 +1173,226 @@ const ProcessLogSchema = new mongoose.Schema({
 
 const ProcessLog = mongoose.model("ProcessLog", ProcessLogSchema);
 
-// 수동 지각 처리 API 제거
-// 수동 결석 처리 API 제거
+// 수동 지각 처리 API
+app.post(
+  "/api/attendance/process-late",
+  verifyToken,
+  isAdmin,
+  async (req, res) => {
+    try {
+      const now = moment();
+      const today = now.format("YYYY-MM-DD");
+      const currentTime = now.format("HH:mm:ss");
+
+      // 휴일 체크
+      const holiday = await Holiday.findOne({
+        date: now.startOf("day").toDate(),
+      });
+
+      if (holiday) {
+        return res.status(400).json({
+          success: false,
+          message: "휴일에는 지각 처리를 할 수 없습니다.",
+        });
+      }
+
+      // 출석 설정 가져오기
+      const settings = await AttendanceSettings.findOne().sort({
+        updatedAt: -1,
+      });
+      if (!settings) {
+        return res.status(400).json({
+          success: false,
+          message: "출석 설정을 찾을 수 없습니다.",
+        });
+      }
+
+      // 미출석 학생 조회
+      const allStudents = await User.find({
+        isApproved: true,
+        isAdmin: false,
+        isReader: false,
+        isTeacher: false,
+      });
+
+      const attendedStudents = await Attendance.find({
+        timestamp: {
+          $gte: today.format("YYYY-MM-DD 00:00:00"),
+          $lt: moment(today).add(1, "day").format("YYYY-MM-DD 00:00:00"),
+        },
+      }).distinct("studentId");
+
+      const unattendedStudents = allStudents.filter(
+        (student) => !attendedStudents.includes(student.studentId)
+      );
+
+      // 지각 처리 결과
+      const results = {
+        processedCount: unattendedStudents.length,
+        successCount: 0,
+        failedCount: 0,
+        details: [],
+      };
+
+      // 지각 처리
+      for (const student of unattendedStudents) {
+        try {
+          const [normalHour, normalMinute] = settings.normalTime
+            .split(":")
+            .map(Number);
+          const normalTime = now
+            .clone()
+            .add(normalHour, "hours")
+            .add(normalMinute, "minutes");
+
+          const lateMinutes = moment().diff(normalTime, "minutes");
+
+          const attendance = new Attendance({
+            studentId: student.studentId,
+            timestamp: now.format(),
+            status: "late",
+            lateMinutes: Math.max(0, lateMinutes),
+          });
+
+          await attendance.save();
+          results.successCount++;
+          results.details.push({
+            success: true,
+            message: `${student.studentId} (${student.name}) - 지각 처리 완료`,
+          });
+        } catch (error) {
+          results.failedCount++;
+          results.details.push({
+            success: false,
+            message: `${student.studentId} (${student.name}) - 처리 실패: ${error.message}`,
+          });
+        }
+      }
+
+      // 처리 로그 저장
+      await new ProcessLog({
+        type: "manual_late",
+        processDate: today,
+        processTime: currentTime,
+        processedCount: results.successCount,
+        details: `성공: ${results.successCount}명, 실패: ${results.failedCount}명`,
+      }).save();
+
+      res.json({
+        success: true,
+        message: "지각 처리가 완료되었습니다.",
+        ...results,
+      });
+    } catch (error) {
+      logger.error("수동 지각 처리 중 오류:", error);
+      res.status(500).json({
+        success: false,
+        message: "지각 처리 중 오류가 발생했습니다.",
+      });
+    }
+  }
+);
+
+// 수동 결석 처리 API
+app.post(
+  "/api/attendance/process-absent",
+  verifyToken,
+  isAdmin,
+  async (req, res) => {
+    try {
+      const now = moment().tz("Asia/Seoul");
+      const today = now.format("YYYY-MM-DD");
+      const currentTime = now.format("HH:mm:ss");
+
+      // 휴일 체크
+      const holiday = await Holiday.findOne({
+        date: now.startOf("day").toDate(),
+      });
+
+      if (holiday) {
+        return res.status(400).json({
+          success: false,
+          message: "휴일에는 결석 처리를 할 수 없습니다.",
+        });
+      }
+
+      // 미출석 학생 조회
+      const allStudents = await User.find({
+        isApproved: true,
+        isAdmin: false,
+        isReader: false,
+        isTeacher: false,
+      });
+
+      const attendedStudents = await Attendance.find({
+        timestamp: {
+          $gte: `${today} 00:00:00`,
+          $lt: moment(today).add(1, "day").format("YYYY-MM-DD 00:00:00"),
+        },
+      }).distinct("studentId");
+
+      const unattendedStudents = allStudents.filter(
+        (student) => !attendedStudents.includes(student.studentId)
+      );
+
+      // 결석 처리 결과
+      const results = {
+        processedCount: unattendedStudents.length,
+        successCount: 0,
+        failedCount: 0,
+        details: [],
+      };
+
+      // 결석 처리
+      for (const student of unattendedStudents) {
+        try {
+          const attendance = new Attendance({
+            studentId: student.studentId,
+            timestamp: now.format(),
+            status: "absent",
+            lateMinutes: 0,
+          });
+
+          await attendance.save();
+          results.successCount++;
+          results.details.push({
+            success: true,
+            message: `${student.studentId} (${student.name}) - 결석 처리 완료`,
+          });
+        } catch (error) {
+          console.error(`학생 ${student.studentId} 결석 처리 중 오류:`, error);
+          results.failedCount++;
+          results.details.push({
+            success: false,
+            message: `${student.studentId} (${student.name}) - 처리 실패: ${error.message}`,
+          });
+        }
+      }
+
+      // 처리 로그 저장
+      await new ProcessLog({
+        type: "manual_absent",
+        processDate: today,
+        processTime: currentTime,
+        processedCount: results.successCount,
+        details: `성공: ${results.successCount}명, 실패: ${results.failedCount}명`,
+      }).save();
+
+      res.json({
+        success: true,
+        message: "결석 처리가 완료되었습니다.",
+        ...results,
+      });
+    } catch (error) {
+      console.error("결석 처리 중 오류:", error);
+      res.status(500).json({
+        success: false,
+        message: "결석 처리 중 오류가 발생했습니다.",
+        error: error.message,
+      });
+    }
+  }
+);
 
 // 전역 스케줄러 객체 저장
 let autoAbsentJob = null;
