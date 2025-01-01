@@ -1094,10 +1094,18 @@ async function processAutoAbsent() {
       second: 0,
     });
 
+    logger.info(`[자동 결석 처리] 디버그 - now: ${now.format()}`);
+    logger.info(
+      `[자동 결석 처리] 디버그 - autoAbsentTime: ${autoAbsentTime.format()}`
+    );
+    logger.info(
+      `[자동 결석 처리] 디버그 - isBefore 결과: ${now.isBefore(autoAbsentTime)}`
+    );
+
     if (now.isBefore(autoAbsentTime)) {
       logger.info(
         `[자동 결석 처리] 현재 시간(${now.format(
-          "HH:mm"
+          "YYYY-MM-DD HH:mm:ss"
         )})이 자동 결석 처리 시간(${settings.autoAbsentTime})보다 이릅니다.`
       );
       return;
