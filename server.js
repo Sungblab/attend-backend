@@ -775,7 +775,7 @@ function getCurrentKoreanTime() {
 }
 
 // determineAttendanceStatus 함수 수정
-async function determineAttendanceStatus(timestamp) {
+async function determineAttendanceStatus(timestamp, student) {
   try {
     const koreanTime = moment.tz(
       timestamp,
@@ -796,6 +796,10 @@ async function determineAttendanceStatus(timestamp) {
         details: {
           holiday: isHoliday.reason,
           date: koreanTime.format("YYYY-MM-DD"),
+          student: {
+            studentId: student.studentId,
+            name: student.name,
+          },
         },
       };
     }
@@ -830,6 +834,10 @@ async function determineAttendanceStatus(timestamp) {
         details: {
           currentTime: koreanTime.format("HH:mm"),
           startTime: settings.startTime,
+          student: {
+            studentId: student.studentId,
+            name: student.name,
+          },
         },
       };
     }
@@ -844,6 +852,10 @@ async function determineAttendanceStatus(timestamp) {
         details: {
           currentTime: koreanTime.format("HH:mm"),
           normalTime: settings.normalTime,
+          student: {
+            studentId: student.studentId,
+            name: student.name,
+          },
         },
       };
     }
@@ -860,6 +872,10 @@ async function determineAttendanceStatus(timestamp) {
           currentTime: koreanTime.format("HH:mm"),
           lateTime: settings.lateTime,
           minutesLate: minutesLate,
+          student: {
+            studentId: student.studentId,
+            name: student.name,
+          },
         },
       };
     }
@@ -873,6 +889,10 @@ async function determineAttendanceStatus(timestamp) {
       details: {
         currentTime: koreanTime.format("HH:mm"),
         lateTime: settings.lateTime,
+        student: {
+          studentId: student.studentId,
+          name: student.name,
+        },
       },
     };
   } catch (error) {
@@ -938,7 +958,10 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       }
 
       // 출석 상태 결정
-      const attendanceStatus = await determineAttendanceStatus(timestamp);
+      const attendanceStatus = await determineAttendanceStatus(
+        timestamp,
+        student
+      );
       if (!attendanceStatus.success) {
         return res.status(200).json({
           success: false,
