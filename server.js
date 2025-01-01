@@ -351,7 +351,7 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     if (!studentId || !password) {
       return res.status(400).json({
         success: false,
-        message: "필수 정보가 누락되었습니다.",
+        message: "필번과 비밀번호를 모두 입력해주세요.",
       });
     }
 
@@ -361,7 +361,7 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
       incrementLoginAttempts(ip);
       return res.status(401).json({
         success: false,
-        message: "존재하지 않는 학번입니다.",
+        message: "학번 또는 비밀번호가 일치하지 않습니다.",
       });
     }
 
@@ -379,7 +379,7 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
       incrementLoginAttempts(ip);
       return res.status(401).json({
         success: false,
-        message: "비밀번호가 일치하지 않습니다.",
+        message: "학번 또는 비밀번호가 일치하지 않습니다.",
       });
     }
 
@@ -904,21 +904,23 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   try {
     const { encryptedData } = req.body;
 
-    // 데이터 유효성 검사 강화
+    // QR 코드 데이터 검증
     if (!encryptedData || typeof encryptedData !== "string") {
-      return res.status(400).json({
+      return res.status(422).json({
         success: false,
         message: "QR 코드를 다시 스캔해주세요. 유효하지 않은 QR 코드입니다.",
+        type: "INVALID_QR",
       });
     }
 
-    // QR 코드 형식 검사 추가
+    // QR 코드 형식 검사
     const [ivHex, encryptedHex] = encryptedData.split(":");
     if (!ivHex || !encryptedHex) {
-      return res.status(400).json({
+      return res.status(422).json({
         success: false,
         message:
           "QR 코드 형식이 올바르지 않습니다. 새로운 QR 코드를 생성해주세요.",
+        type: "INVALID_FORMAT",
       });
     }
 
@@ -934,28 +936,32 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       decrypted = Buffer.concat([decrypted, decipher.final()]);
       const [studentId, timestamp] = decrypted.toString().split("|");
 
-      // 복호화된 데이터 검증 추가
+      // 복호화된 데이터 검증
       if (!studentId || !timestamp) {
-        throw new Error(
-          "QR 코드가 손상되었습니다. 새로운 QR 코드를 생성해주세요."
-        );
+        return res.status(422).json({
+          success: false,
+          message: "QR 코드가 손상되었습니다. 새로운 QR 코드를 생성해주세요.",
+          type: "CORRUPTED_QR",
+        });
       }
 
       // 학생 정보 조회
       const student = await User.findOne({ studentId });
       if (!student) {
-        return res.status(400).json({
+        return res.status(404).json({
           success: false,
           message: "등록되지 않은 학생입니다. 학생 등록 후 다시 시도해주세요.",
+          type: "STUDENT_NOT_FOUND",
         });
       }
 
       // 출석 상태 결정
       const attendanceStatus = await determineAttendanceStatus(timestamp);
       if (!attendanceStatus.success) {
-        return res.status(400).json({
+        return res.status(200).json({
           success: false,
           message: attendanceStatus.message,
+          type: attendanceStatus.status.toUpperCase(),
           details: attendanceStatus.details || {},
         });
       }
@@ -974,21 +980,29 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 
       if (existingAttendance) {
         let statusMessage = "";
+        let statusType = "";
+
         switch (existingAttendance.status) {
           case "present":
             statusMessage = "정상 출석";
+            statusType = "ALREADY_PRESENT";
             break;
           case "late":
             statusMessage = `지각(${existingAttendance.lateMinutes}분)`;
+            statusType = "ALREADY_LATE";
             break;
           case "absent":
             statusMessage = existingAttendance.isExcused ? "인정결석" : "결석";
+            statusType = existingAttendance.isExcused
+              ? "ALREADY_EXCUSED"
+              : "ALREADY_ABSENT";
             break;
         }
 
-        return res.status(400).json({
+        return res.status(200).json({
           success: false,
           message: `이미 오늘 출석이 처리되었습니다. (${statusMessage})`,
+          type: statusType,
           attendance: {
             ...existingAttendance.toObject(),
             name: student.name,
@@ -1006,9 +1020,29 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
 
       await attendance.save();
 
+      // 상태별 메시지 설정
+      let responseMessage = "";
+      let responseType = "";
+
+      switch (attendance.status) {
+        case "present":
+          responseMessage = "정상 출석 처리되었습니다.";
+          responseType = "PRESENT_SUCCESS";
+          break;
+        case "late":
+          responseMessage = `지각 처리되었습니다. (${attendance.lateMinutes}분 지각)`;
+          responseType = "LATE_SUCCESS";
+          break;
+        case "absent":
+          responseMessage = "결석 처리되었습니다.";
+          responseType = "ABSENT_SUCCESS";
+          break;
+      }
+
       res.status(201).json({
         success: true,
-        message: attendanceStatus.message,
+        message: responseMessage,
+        type: responseType,
         attendance: {
           ...attendance.toObject(),
           name: student.name,
@@ -1016,9 +1050,10 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
       });
     } catch (cryptoError) {
       console.error("복호화 오류:", cryptoError);
-      return res.status(400).json({
+      return res.status(422).json({
         success: false,
         message: "QR 코드를 읽을 수 없습니다. 새로운 QR 코드를 생성해주세요.",
+        type: "DECRYPTION_ERROR",
         details: cryptoError.message,
       });
     }
@@ -1027,6 +1062,7 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "출석 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+      type: "SERVER_ERROR",
       details: error.message,
     });
   }
