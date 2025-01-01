@@ -783,6 +783,15 @@ const ATTENDANCE_START_TIME = "07:30"; // 출석 시작 시간
 const NORMAL_ATTENDANCE_TIME = "08:03"; // 정상 출석 마감 시간
 const LATE_ATTENDANCE_TIME = "09:00"; // 지각 마감 시간
 
+// 서버 시작 시 시간대 설정
+process.env.TZ = "Asia/Seoul";
+moment.tz.setDefault("Asia/Seoul");
+
+// 시간 관련 유틸리티 함수 추가
+function getCurrentKoreanTime() {
+  return moment().tz("Asia/Seoul");
+}
+
 // determineAttendanceStatus 함수 수정
 async function determineAttendanceStatus(timestamp) {
   try {
@@ -1023,19 +1032,18 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
   }
 });
 
-// 서버 시작 시 시간대 설정
-process.env.TZ = "Asia/Seoul";
-moment.tz.setDefault("Asia/Seoul");
-
 // 자동 결석 처리 함수 수정
 async function processAutoAbsent() {
   try {
-    const now = moment().tz("Asia/Seoul");
+    const now = getCurrentKoreanTime();
     const today = now.format("YYYY-MM-DD");
     const currentTime = now.format("HH:mm:ss");
 
     logger.info(`[자동 결석 처리] 시작 - ${today} ${currentTime}`);
     logger.info(`[자동 결석 처리] 서버 시간대: ${process.env.TZ}`);
+    logger.info(
+      `[자동 결석 처리] 현재 시간: ${now.format("YYYY-MM-DD HH:mm:ss")}`
+    );
 
     // 주말인 경우 처리하지 않음
     if (now.day() === 0 || now.day() === 6) {
@@ -1420,9 +1428,15 @@ async function setupAutoAbsentSchedule() {
     );
 
     // 현재 시간이 설정된 시간을 지났는지 확인하고, 지났다면 즉시 실행
-    const now = moment().tz("Asia/Seoul");
+    const now = getCurrentKoreanTime();
     const currentMinutes = now.hours() * 60 + now.minutes();
     const scheduledMinutes = hour * 60 + minute;
+
+    logger.info(
+      `[스케줄러] 현재 시간: ${now.format("HH:mm")}, 설정된 시간: ${
+        settings.autoAbsentTime
+      }`
+    );
 
     if (
       now.day() !== 0 &&
