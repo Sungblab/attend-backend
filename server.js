@@ -1461,14 +1461,15 @@ async function setupAutoAbsentSchedule() {
 // 출석 설정이 변경될 때마다 스케줄 재설정
 app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
   try {
-    const { startTime, normalTime, lateTime } = req.body;
+    const { startTime, normalTime, lateTime, autoAbsentTime } = req.body;
 
     // 시간 형식 검증 (HH:mm)
     const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
     if (
       !timeRegex.test(startTime) ||
       !timeRegex.test(normalTime) ||
-      !timeRegex.test(lateTime)
+      !timeRegex.test(lateTime) ||
+      !timeRegex.test(autoAbsentTime)
     ) {
       return res.status(400).json({
         success: false,
@@ -1480,11 +1481,16 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
     const start = moment(startTime, "HH:mm");
     const normal = moment(normalTime, "HH:mm");
     const late = moment(lateTime, "HH:mm");
+    const autoAbsent = moment(autoAbsentTime, "HH:mm");
 
-    if (start.isAfter(normal) || normal.isAfter(late)) {
+    if (
+      start.isAfter(normal) ||
+      normal.isAfter(late) ||
+      late.isAfter(autoAbsent)
+    ) {
       return res.status(400).json({
         success: false,
-        message: "시간 순서가 올바르지 않습니다. (출석시작 < 정상출석 < 지각)",
+        message: "시간 순서가 올바르지 않습니다.",
       });
     }
 
@@ -1492,21 +1498,14 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
       startTime,
       normalTime,
       lateTime,
+      autoAbsentTime,
       updatedBy: req.user.id,
     });
 
     await settings.save();
 
-    // 스케줄 재설정
+    // 자동 결석 처리 스케줄 재설정
     await setupAutoAbsentSchedule();
-
-    logger.info(
-      `출결 설정이 업데이트되었습니다: ${JSON.stringify({
-        startTime,
-        normalTime,
-        lateTime,
-      })}`
-    );
 
     res.json({
       success: true,
@@ -1515,11 +1514,13 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
         startTime: settings.startTime,
         normalTime: settings.normalTime,
         lateTime: settings.lateTime,
+        autoAbsentTime: settings.autoAbsentTime,
         updatedAt: settings.updatedAt,
+        updatedBy: req.user.name,
       },
     });
   } catch (error) {
-    logger.error("출결 설정 업데이트 중 오류: " + error.message);
+    console.error("출결 설정 업데이트 중 오류:", error);
     res.status(500).json({
       success: false,
       message: "출결 설정 업데이트 중 오류가 발생했습니다.",
@@ -2628,7 +2629,7 @@ app.use(
 // 출결 설정 조회 API
 app.get("/api/settings/attendance", verifyToken, async (req, res) => {
   try {
-    let settings = await AttendanceSettings.findOne()
+    const settings = await AttendanceSettings.findOne()
       .sort({ updatedAt: -1 })
       .populate("updatedBy", "name");
 
@@ -3436,6 +3437,144 @@ app.delete("/api/device", verifyToken, async (req, res) => {
       success: false,
       message: "서버 오류가 발생했습니다.",
       error: error.message,
+    });
+  }
+});
+
+// 처리 로그 조회 API
+app.get("/api/process-logs", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const logs = await ProcessLog.find()
+      .sort({ processDate: -1, processTime: -1 })
+      .limit(20); // 최근 20개 로그만 반환
+
+    res.json({
+      success: true,
+      logs: logs.map((log) => ({
+        type: log.type,
+        processDate: log.processDate,
+        processTime: log.processTime,
+        processedCount: log.processedCount,
+        details: log.details,
+      })),
+    });
+  } catch (error) {
+    console.error("처리 로그 조회 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "처리 로그 조회 중 오류가 발생했습니다.",
+    });
+  }
+});
+
+// 출결 설정 조회 API
+app.get("/api/settings/attendance", verifyToken, async (req, res) => {
+  try {
+    const settings = await AttendanceSettings.findOne()
+      .sort({ updatedAt: -1 })
+      .populate("updatedBy", "name");
+
+    if (!settings) {
+      // 기본 설정값 반환
+      return res.json({
+        success: true,
+        settings: {
+          startTime: "07:30",
+          normalTime: "08:03",
+          lateTime: "09:00",
+          autoAbsentTime: "09:00",
+          updatedAt: new Date(),
+          updatedBy: null,
+        },
+      });
+    }
+
+    res.json({
+      success: true,
+      settings: {
+        startTime: settings.startTime,
+        normalTime: settings.normalTime,
+        lateTime: settings.lateTime,
+        autoAbsentTime: settings.autoAbsentTime,
+        updatedAt: settings.updatedAt,
+        updatedBy: settings.updatedBy?.name,
+      },
+    });
+  } catch (error) {
+    console.error("출결 설정 조회 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "출결 설정 조회 중 오류가 발생했습니다.",
+    });
+  }
+});
+
+// 출결 설정 업데이트 API
+app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const { startTime, normalTime, lateTime, autoAbsentTime } = req.body;
+
+    // 시간 형식 검증 (HH:mm)
+    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (
+      !timeRegex.test(startTime) ||
+      !timeRegex.test(normalTime) ||
+      !timeRegex.test(lateTime) ||
+      !timeRegex.test(autoAbsentTime)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "잘못된 시간 형식입니다. (HH:mm)",
+      });
+    }
+
+    // 시간 순서 검증
+    const start = moment(startTime, "HH:mm");
+    const normal = moment(normalTime, "HH:mm");
+    const late = moment(lateTime, "HH:mm");
+    const autoAbsent = moment(autoAbsentTime, "HH:mm");
+
+    if (
+      start.isAfter(normal) ||
+      normal.isAfter(late) ||
+      late.isAfter(autoAbsent)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "시간 순서가 올바르지 않습니다.",
+      });
+    }
+
+    const settings = new AttendanceSettings({
+      startTime,
+      normalTime,
+      lateTime,
+      autoAbsentTime,
+      updatedBy: req.user.id,
+    });
+
+    await settings.save();
+
+    // 자동 결석 처리 스케줄 재설정
+    await setupAutoAbsentSchedule();
+
+    res.json({
+      success: true,
+      message: "출결 설정이 업데이트되었습니다.",
+      settings: {
+        startTime: settings.startTime,
+        normalTime: settings.normalTime,
+        lateTime: settings.lateTime,
+        autoAbsentTime: settings.autoAbsentTime,
+        updatedAt: settings.updatedAt,
+        updatedBy: req.user.name,
+      },
+    });
+  } catch (error) {
+    console.error("출결 설정 업데이트 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "출결 설정 업데이트 중 오류가 발생했습니다.",
     });
   }
 });
