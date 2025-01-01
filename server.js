@@ -1403,6 +1403,7 @@ async function setupAutoAbsentSchedule() {
     // 기존 스케줄이 있다면 취소
     if (autoAbsentJob) {
       autoAbsentJob.cancel();
+      logger.info("[스케줄러] 기존 자동 결석 처리 스케줄이 취소되었습니다.");
     }
 
     const settings = await AttendanceSettings.findOne().sort({ updatedAt: -1 });
@@ -1422,7 +1423,7 @@ async function setupAutoAbsentSchedule() {
 
     autoAbsentJob = schedule.scheduleJob(cronExpression, processAutoAbsent);
     logger.info(
-      `[스케줄러] 자동 결석 처리 스케줄이 설정되었습니다: ${settings.autoAbsentTime} (KST, 월-금)`
+      `[스케줄러] 자동 결석 처리 스케줄이 ${settings.autoAbsentTime} (KST, 월-금)으로 설정되었습니다.`
     );
 
     // 현재 시간이 설정된 시간을 지났는지 확인하고, 지났다면 즉시 실행
@@ -1439,8 +1440,14 @@ async function setupAutoAbsentSchedule() {
       logger.info(
         "[스케줄러] 현재 시간이 설정된 시간을 지났으므로 자동 결석 처리를 즉시 실행합니다."
       );
-      processAutoAbsent();
+      await processAutoAbsent();
     }
+
+    return {
+      success: true,
+      message: `자동 결석 처리 시간이 ${settings.autoAbsentTime}으로 설정되었습니다.`,
+      nextInvocation: autoAbsentJob.nextInvocation(),
+    };
   } catch (error) {
     logger.error(
       "[스케줄러] 자동 결석 처리 스케줄 설정 중 오류: " + error.message
@@ -1453,6 +1460,7 @@ async function setupAutoAbsentSchedule() {
     logger.info(
       "[스케줄러] 오류로 인해 기본값(09:00, 월-금)으로 스케줄이 설정되었습니다."
     );
+    throw error;
   }
 }
 
@@ -1503,7 +1511,21 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
     await settings.save();
 
     // 자동 결석 처리 스케줄 재설정
-    await setupAutoAbsentSchedule();
+    try {
+      const scheduleResult = await setupAutoAbsentSchedule();
+      logger.info(
+        "[설정] 자동 결석 처리 스케줄이 업데이트되었습니다:",
+        scheduleResult
+      );
+    } catch (scheduleError) {
+      logger.error("[설정] 스케줄 업데이트 중 오류:", scheduleError);
+      return res.status(500).json({
+        success: false,
+        message:
+          "출결 설정은 저장되었으나, 자동 결석 처리 스케줄 업데이트에 실패했습니다.",
+        error: scheduleError.message,
+      });
+    }
 
     res.json({
       success: true,
@@ -1522,6 +1544,7 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "출결 설정 업데이트 중 오류가 발생했습니다.",
+      error: error.message,
     });
   }
 });
@@ -3554,7 +3577,21 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
     await settings.save();
 
     // 자동 결석 처리 스케줄 재설정
-    await setupAutoAbsentSchedule();
+    try {
+      const scheduleResult = await setupAutoAbsentSchedule();
+      logger.info(
+        "[설정] 자동 결석 처리 스케줄이 업데이트되었습니다:",
+        scheduleResult
+      );
+    } catch (scheduleError) {
+      logger.error("[설정] 스케줄 업데이트 중 오류:", scheduleError);
+      return res.status(500).json({
+        success: false,
+        message:
+          "출결 설정은 저장되었으나, 자동 결석 처리 스케줄 업데이트에 실패했습니다.",
+        error: scheduleError.message,
+      });
+    }
 
     res.json({
       success: true,
@@ -3573,6 +3610,7 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "출결 설정 업데이트 중 오류가 발생했습니다.",
+      error: error.message,
     });
   }
 });
