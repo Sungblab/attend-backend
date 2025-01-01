@@ -1442,10 +1442,11 @@ async function setupAutoAbsentSchedule() {
     // 기존 스케줄이 있다면 취소
     if (autoAbsentJob) {
       autoAbsentJob.cancel();
+      logger.info("[스케줄러] 기존 자동 결석 처리 스케줄이 취소되었습니다.");
     }
 
     const settings = await AttendanceSettings.findOne().sort({ updatedAt: -1 });
-    if (!settings) {
+    if (!settings || !settings.autoAbsentTime) {
       logger.error(
         "[스케줄러] 출석 설정을 찾을 수 없어 기본값으로 스케줄을 설정합니다."
       );
@@ -1461,24 +1462,35 @@ async function setupAutoAbsentSchedule() {
 
     autoAbsentJob = schedule.scheduleJob(cronExpression, processAutoAbsent);
     logger.info(
-      `[스케줄러] 자동 결석 처리 스케줄이 설정되었습니다: ${settings.autoAbsentTime} (KST, 월-금)`
+      `[스케줄러] 자동 결석 처리 스케줄이 ${settings.autoAbsentTime} (KST, 월-금)으로 설정되었습니다.`
     );
 
     // 현재 시간이 설정된 시간을 지났는지 확인하고, 지났다면 즉시 실행
     const now = moment().tz("Asia/Seoul");
-    const currentMinutes = now.hours() * 60 + now.minutes();
-    const scheduledMinutes = hour * 60 + minute;
+    if (now.day() !== 0 && now.day() !== 6) {
+      // 주말이 아닌 경우에만
+      const currentMinutes = now.hours() * 60 + now.minutes();
+      const scheduledMinutes = hour * 60 + minute;
 
-    if (
-      now.day() !== 0 &&
-      now.day() !== 6 &&
-      currentMinutes >= scheduledMinutes &&
-      !autoAbsentJob.nextInvocation()
-    ) {
-      logger.info(
-        "[스케줄러] 현재 시간이 설정된 시간을 지났으므로 자동 결석 처리를 즉시 실행합니다."
-      );
-      processAutoAbsent();
+      if (currentMinutes >= scheduledMinutes) {
+        const today = now.format("YYYY-MM-DD");
+        // 오늘 이미 실행되었는지 확인
+        const processLog = await ProcessLog.findOne({
+          type: "auto_absent",
+          processDate: today,
+        });
+
+        if (!processLog) {
+          logger.info(
+            "[스케줄러] 현재 시간이 설정된 시간을 지났고 오늘 실행된 기록이 없어 자동 결석 처리를 즉시 실행합니다."
+          );
+          processAutoAbsent();
+        } else {
+          logger.info(
+            `[스케줄러] 오늘(${today})은 이미 ${processLog.processTime}에 처리되었습니다.`
+          );
+        }
+      }
     }
   } catch (error) {
     logger.error(
