@@ -75,10 +75,7 @@ const UserSchema = new mongoose.Schema({
   isTeacher: { type: Boolean, default: false },
   isReader: { type: Boolean, default: false },
   isApproved: { type: Boolean, default: false },
-  timestamp: {
-    type: String,
-    default: () => moment().format("YYYY-MM-DD HH:mm:ss"),
-  },
+  timestamp: { type: Date, default: Date.now },
   // 담당 학년과 반 추가
   teacherGrade: { type: Number, enum: [1, 2, 3] },
   teacherClass: { type: Number, min: 1, max: 6 },
@@ -93,10 +90,7 @@ const AttendanceSettingsSchema = new mongoose.Schema({
   startTime: { type: String, required: true, default: "07:30" },
   normalTime: { type: String, required: true, default: "08:03" },
   lateTime: { type: String, required: true, default: "09:00" },
-  updatedAt: {
-    type: String,
-    default: () => moment().format("YYYY-MM-DD HH:mm:ss"),
-  },
+  updatedAt: { type: Date, default: Date.now },
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   autoAbsentTime: { type: String, required: true, default: "09:00" },
 });
@@ -778,7 +772,7 @@ const AttendanceSchema = new mongoose.Schema({
   lateMinutes: { type: Number, default: 0 },
   isExcused: { type: Boolean, default: false },
   reason: { type: String },
-  excusedAt: { type: String },
+  excusedAt: { type: Date },
   excusedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 });
 
@@ -1036,13 +1030,12 @@ moment.tz.setDefault("Asia/Seoul");
 // 자동 결석 처리 함수 수정
 async function processAutoAbsent() {
   try {
-    const now = moment().tz("Asia/Seoul"); // 명시적으로 한국 시간대 설정
+    const now = moment();
     const today = now.format("YYYY-MM-DD");
     const currentTime = now.format("HH:mm:ss");
 
-    logger.info(`[자동 결석 처리] 시작 - ${today} ${currentTime} (KST)`);
+    logger.info(`[자동 결석 처리] 시작 - ${today} ${currentTime}`);
     logger.info(`[자동 결석 처리] 서버 시간대: ${process.env.TZ}`);
-    logger.info(`[자동 결석 처리] 현재 시간: ${now.format("HH:mm:ss")}`);
 
     // 주말인 경우 처리하지 않음
     if (now.day() === 0 || now.day() === 6) {
@@ -1052,7 +1045,7 @@ async function processAutoAbsent() {
 
     // 휴일 체크
     const holiday = await Holiday.findOne({
-      date: now.format("YYYY-MM-DD"),
+      date: now.startOf("day").toDate(),
     });
 
     if (holiday) {
@@ -1087,17 +1080,8 @@ async function processAutoAbsent() {
       .map(Number);
 
     // 현재 시간이 자동 결석 처리 시간을 지났는지 확인
-    const currentHour = parseInt(now.format("HH"));
-    const currentMinute = parseInt(now.format("mm"));
-    const currentMinutes = currentHour * 60 + currentMinute;
+    const currentMinutes = now.hours() * 60 + now.minutes();
     const autoAbsentMinutes = autoAbsentHour * 60 + autoAbsentMinute;
-
-    logger.info(
-      `[자동 결석 처리] 현재 시간: ${currentHour}:${currentMinute} (${currentMinutes}분)`
-    );
-    logger.info(
-      `[자동 결석 처리] 설정된 시간: ${autoAbsentHour}:${autoAbsentMinute} (${autoAbsentMinutes}분)`
-    );
 
     if (currentMinutes < autoAbsentMinutes) {
       logger.info(
@@ -1118,8 +1102,8 @@ async function processAutoAbsent() {
 
     const attendedStudents = await Attendance.find({
       timestamp: {
-        $gte: now.clone().startOf("day").format("YYYY-MM-DD HH:mm:ss"),
-        $lt: now.clone().endOf("day").format("YYYY-MM-DD HH:mm:ss"),
+        $gte: moment(today).startOf("day").format(),
+        $lt: moment(today).add(1, "day").startOf("day").format(),
       },
     }).distinct("studentId");
 
@@ -1831,7 +1815,16 @@ app.use(helmet());
 const RefreshTokenSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   token: { type: String, required: true },
-  expiresAt: { type: String, required: true },
+  expiresAt: {
+    type: Date,
+    required: true,
+    validate: {
+      validator: function (v) {
+        return v instanceof Date && !isNaN(v);
+      },
+      message: "유효한 날짜가 아닙니다.",
+    },
+  },
 });
 
 const RefreshToken = mongoose.model("RefreshToken", RefreshTokenSchema);
@@ -2280,14 +2273,11 @@ app.get("/api/attendance/excused", verifyToken, async (req, res) => {
   }
 });
 
-// Holiday 모델 수정
+// Holiday 모델 수정 (source 필드 추가)
 const HolidaySchema = new mongoose.Schema({
-  date: { type: String, required: true, unique: true }, // Date -> String
+  date: { type: Date, required: true, unique: true },
   reason: { type: String, required: true },
-  createdAt: {
-    type: String,
-    default: () => moment().format("YYYY-MM-DD HH:mm:ss"),
-  },
+  createdAt: { type: Date, default: Date.now },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   source: {
     type: String,
@@ -2296,10 +2286,10 @@ const HolidaySchema = new mongoose.Schema({
   },
 });
 
-// 날짜 검증을 위한 미들웨어 수정
+// 날짜 검증을 위한 미들웨어 추가
 HolidaySchema.pre("save", function (next) {
   if (this.date) {
-    this.date = moment(this.date).format("YYYY-MM-DD");
+    this.date = moment(this.date).startOf("day").toDate();
   }
   next();
 });
@@ -3412,10 +3402,7 @@ const DeviceSchema = new mongoose.Schema({
     platform: String,
     version: String,
     isEmulator: Boolean,
-    lastLogin: {
-      type: String,
-      default: () => moment().format("YYYY-MM-DD HH:mm:ss"),
-    },
+    lastLogin: { type: Date, default: Date.now }, // lastLogin을 deviceInfo 내부로 이동
   },
 });
 
