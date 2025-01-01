@@ -1317,13 +1317,28 @@ app.post(
       }
 
       // 미출석 학생 조회
-      const allStudents = await User.find({
+      let userQuery = {
         isApproved: true,
         isAdmin: false,
         isReader: false,
         isTeacher: false,
-      });
+      };
 
+      // 학년, 반 필터 적용
+      const { grade, class: classNum } = req.body;
+      if (grade) userQuery.grade = parseInt(grade);
+      if (classNum) userQuery.class = parseInt(classNum);
+
+      const allStudents = await User.find(userQuery);
+
+      if (allStudents.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "처리할 학생이 없습니다.",
+        });
+      }
+
+      // 오늘 출석한 학생들의 ID 목록 조회
       const attendedStudents = await Attendance.find({
         timestamp: {
           $gte: `${today} 00:00:00`,
@@ -1331,12 +1346,28 @@ app.post(
         },
       }).distinct("studentId");
 
+      // 미출석 학생 필터링
       const unattendedStudents = allStudents.filter(
         (student) => !attendedStudents.includes(student.studentId)
       );
 
+      if (unattendedStudents.length === 0) {
+        return res.json({
+          success: true,
+          message: "처리할 미출석 학생이 없습니다.",
+          results: {
+            totalCount: allStudents.length,
+            processedCount: 0,
+            successCount: 0,
+            failedCount: 0,
+            details: [],
+          },
+        });
+      }
+
       // 결석 처리 결과
       const results = {
+        totalCount: allStudents.length,
         processedCount: unattendedStudents.length,
         successCount: 0,
         failedCount: 0,
@@ -1357,14 +1388,22 @@ app.post(
           results.successCount++;
           results.details.push({
             success: true,
-            message: `${student.studentId} (${student.name}) - 결석 처리 완료`,
+            studentId: student.studentId,
+            name: student.name,
+            grade: student.grade,
+            class: student.class,
+            message: "결석 처리 완료",
           });
         } catch (error) {
           console.error(`학생 ${student.studentId} 결석 처리 중 오류:`, error);
           results.failedCount++;
           results.details.push({
             success: false,
-            message: `${student.studentId} (${student.name}) - 처리 실패: ${error.message}`,
+            studentId: student.studentId,
+            name: student.name,
+            grade: student.grade,
+            class: student.class,
+            message: `처리 실패: ${error.message}`,
           });
         }
       }
@@ -1380,8 +1419,8 @@ app.post(
 
       res.json({
         success: true,
-        message: "결석 처리가 완료되었습니다.",
-        ...results,
+        message: `${results.successCount}명의 학생이 결석 처리되었습니다.`,
+        results,
       });
     } catch (error) {
       console.error("결석 처리 중 오류:", error);
