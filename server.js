@@ -1030,7 +1030,7 @@ moment.tz.setDefault("Asia/Seoul");
 // 자동 결석 처리 함수 수정
 async function processAutoAbsent() {
   try {
-    const now = moment();
+    const now = moment().tz("Asia/Seoul");
     const today = now.format("YYYY-MM-DD");
     const currentTime = now.format("HH:mm:ss");
 
@@ -1078,18 +1078,12 @@ async function processAutoAbsent() {
     const [autoAbsentHour, autoAbsentMinute] = settings.autoAbsentTime
       .split(":")
       .map(Number);
-    const autoAbsentTime = moment()
-      .startOf("day")
-      .add(autoAbsentHour, "hours")
-      .add(autoAbsentMinute, "minutes");
-
-    logger.info(
-      `[자동 결석 처리] 설정된 자동 결석 처리 시간: ${settings.autoAbsentTime} (KST)`
-    );
-    logger.info(`[자동 결석 처리] 현재 시간: ${currentTime} (KST)`);
 
     // 현재 시간이 자동 결석 처리 시간을 지났는지 확인
-    if (now.isBefore(autoAbsentTime)) {
+    const currentMinutes = now.hours() * 60 + now.minutes();
+    const autoAbsentMinutes = autoAbsentHour * 60 + autoAbsentMinute;
+
+    if (currentMinutes < autoAbsentMinutes) {
       logger.info(
         "[자동 결석 처리] 아직 자동 결석 처리 시간이 되지 않았습니다."
       );
@@ -1108,8 +1102,8 @@ async function processAutoAbsent() {
 
     const attendedStudents = await Attendance.find({
       timestamp: {
-        $gte: today.format("YYYY-MM-DD 00:00:00"),
-        $lt: moment(today).add(1, "day").format("YYYY-MM-DD 00:00:00"),
+        $gte: moment(today).startOf("day").format(),
+        $lt: moment(today).add(1, "day").startOf("day").format(),
       },
     }).distinct("studentId");
 
@@ -1131,8 +1125,8 @@ async function processAutoAbsent() {
       const existingAttendance = await Attendance.findOne({
         studentId: student.studentId,
         timestamp: {
-          $gte: today.format("YYYY-MM-DD 00:00:00"),
-          $lt: moment(today).add(1, "day").format("YYYY-MM-DD 00:00:00"),
+          $gte: moment(today).startOf("day").format(),
+          $lt: moment(today).add(1, "day").startOf("day").format(),
         },
       });
 
@@ -1310,13 +1304,6 @@ app.post(
       const today = now.format("YYYY-MM-DD");
       const currentTime = now.format("HH:mm:ss");
 
-      // 디버그 정보 로깅
-      console.log("요청 정보:", {
-        body: req.body,
-        user: req.user,
-        timestamp: now.format(),
-      });
-
       // 휴일 체크
       const holiday = await Holiday.findOne({
         date: now.startOf("day").toDate(),
@@ -1438,11 +1425,22 @@ async function setupAutoAbsentSchedule() {
       `[스케줄러] 자동 결석 처리 스케줄이 설정되었습니다: ${settings.autoAbsentTime} (KST, 월-금)`
     );
 
-    // 서버 시작 시 현재 시간 확인
-    const now = moment();
-    logger.info(
-      `[스케줄러] 현재 서버 시간: ${now.format("YYYY-MM-DD HH:mm:ss")} (KST)`
-    );
+    // 현재 시간이 설정된 시간을 지났는지 확인하고, 지났다면 즉시 실행
+    const now = moment().tz("Asia/Seoul");
+    const currentMinutes = now.hours() * 60 + now.minutes();
+    const scheduledMinutes = hour * 60 + minute;
+
+    if (
+      now.day() !== 0 &&
+      now.day() !== 6 &&
+      currentMinutes >= scheduledMinutes &&
+      !autoAbsentJob.nextInvocation()
+    ) {
+      logger.info(
+        "[스케줄러] 현재 시간이 설정된 시간을 지났으므로 자동 결석 처리를 즉시 실행합니다."
+      );
+      processAutoAbsent();
+    }
   } catch (error) {
     logger.error(
       "[스케줄러] 자동 결석 처리 스케줄 설정 중 오류: " + error.message
