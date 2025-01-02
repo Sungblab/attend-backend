@@ -971,49 +971,19 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
         });
       }
 
-      // 기존 출석 기록 확인
+      // 기존 출석 기록 확인 및 삭제
       const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
       const tomorrow = moment(today).add(1, "days");
 
-      const existingAttendance = await Attendance.findOne({
+      // 당일의 모든 출석 기록 삭제 (인정결석 제외)
+      await Attendance.deleteMany({
         studentId,
         timestamp: {
           $gte: today.format(),
           $lt: tomorrow.format(),
         },
+        isExcused: { $ne: true }, // 인정결석은 삭제하지 않음
       });
-
-      if (existingAttendance) {
-        let statusMessage = "";
-        let statusType = "";
-
-        switch (existingAttendance.status) {
-          case "present":
-            statusMessage = "정상 출석";
-            statusType = "ALREADY_PRESENT";
-            break;
-          case "late":
-            statusMessage = `지각(${existingAttendance.lateMinutes}분)`;
-            statusType = "ALREADY_LATE";
-            break;
-          case "absent":
-            statusMessage = existingAttendance.isExcused ? "인정결석" : "결석";
-            statusType = existingAttendance.isExcused
-              ? "ALREADY_EXCUSED"
-              : "ALREADY_ABSENT";
-            break;
-        }
-
-        return res.status(200).json({
-          success: false,
-          message: `이미 오늘 출석이 처리되었습니다. (${statusMessage})`,
-          type: statusType,
-          attendance: {
-            ...existingAttendance.toObject(),
-            name: student.name,
-          },
-        });
-      }
 
       // 새로운 출석 기록 생성
       const attendance = new Attendance({
@@ -1082,24 +1052,6 @@ async function processAutoAbsent() {
 
     logger.info(`[자동 결석 처리] 시작 - ${today} ${currentTime}`);
 
-    // 주말인 경우 처리하지 않음
-    if (now.day() === 0 || now.day() === 6) {
-      logger.info("[자동 결석 처리] 주말이므로 처리하지 않습니다.");
-      return;
-    }
-
-    // 휴일 체크
-    const holiday = await Holiday.findOne({
-      date: now.startOf("day").toDate(),
-    });
-
-    if (holiday) {
-      logger.info(
-        `[자동 결석 처리] ${holiday.reason}은(는) 휴일이므로 처리하지 않습니다.`
-      );
-      return;
-    }
-
     // 이미 오늘 자동 결석 처리가 실행되었는지 확인
     const processLog = await ProcessLog.findOne({
       type: "auto_absent",
@@ -1113,53 +1065,103 @@ async function processAutoAbsent() {
       return;
     }
 
-    // 출늘 출석하지 않은 학생들 조회
-    const allStudents = await User.find({
-      isApproved: true,
-      isAdmin: false,
-      isReader: false,
-      isTeacher: false,
-    });
-
-    const attendedStudents = await Attendance.find({
-      timestamp: {
-        $gte: moment(today).startOf("day").format(),
-        $lt: moment(today).add(1, "day").startOf("day").format(),
-      },
-    }).distinct("studentId");
-
-    const absentStudents = allStudents.filter(
-      (student) => !attendedStudents.includes(student.studentId)
-    );
-
-    // 결석 처리
-    let processedCount = 0;
-    for (const student of absentStudents) {
-      const attendance = new Attendance({
-        studentId: student.studentId,
-        timestamp: now.format(),
-        status: "absent",
-        lateMinutes: 0,
-      });
-      await attendance.save();
-      processedCount++;
-      logger.info(
-        `[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 결석 처리 완료`
-      );
-    }
-
-    // 처리 로그 저장
-    await new ProcessLog({
+    // 실행 중인 프로세스를 표시하기 위한 임시 로그 생성
+    const tempLog = new ProcessLog({
       type: "auto_absent",
       processDate: today,
       processTime: currentTime,
-      processedCount: processedCount,
-      details: `총 ${allStudents.length}명 중 ${processedCount}명 결석 처리됨`,
-    }).save();
+      processedCount: 0,
+      details: "처리 중...",
+    });
+    await tempLog.save();
 
-    logger.info(
-      `[자동 결석 처리] 완료 - ${processedCount}명의 학생이 결석 처리되었습니다.`
-    );
+    try {
+      // 주말인 경우 처리하지 않음
+      if (now.day() === 0 || now.day() === 6) {
+        logger.info("[자동 결석 처리] 주말이므로 처리하지 않습니다.");
+        await ProcessLog.deleteOne({ _id: tempLog._id });
+        return;
+      }
+
+      // 휴일 체크
+      const holiday = await Holiday.findOne({
+        date: now.startOf("day").toDate(),
+      });
+
+      if (holiday) {
+        logger.info(
+          `[자동 결석 처리] ${holiday.reason}은(는) 휴일이므로 처리하지 않습니다.`
+        );
+        await ProcessLog.deleteOne({ _id: tempLog._id });
+        return;
+      }
+
+      // 출석하지 않은 학생들 조회
+      const allStudents = await User.find({
+        isApproved: true,
+        isAdmin: false,
+        isReader: false,
+        isTeacher: false,
+      });
+
+      // 오늘 출석 기록이 있는 학생들 조회 (모든 상태 포함)
+      const todayAttendances = await Attendance.find({
+        timestamp: {
+          $gte: moment(today).startOf("day").format(),
+          $lt: moment(today).add(1, "day").startOf("day").format(),
+        },
+      });
+
+      // 오늘 출석 기록이 있는 학생들의 ID 목록
+      const studentsWithAttendance = todayAttendances.map((a) => a.studentId);
+
+      // 오늘 출석 기록이 전혀 없는 학생들만 필터링
+      const absentStudents = allStudents.filter(
+        (student) => !studentsWithAttendance.includes(student.studentId)
+      );
+
+      // 결석 처리
+      let processedCount = 0;
+      for (const student of absentStudents) {
+        // 결석 처리 전에 한번 더 확인
+        const hasAttendance = await Attendance.findOne({
+          studentId: student.studentId,
+          timestamp: {
+            $gte: moment(today).startOf("day").format(),
+            $lt: moment(today).add(1, "day").startOf("day").format(),
+          },
+        });
+
+        // 정말로 출석 기록이 없는 경우에만 결석 처리
+        if (!hasAttendance) {
+          const attendance = new Attendance({
+            studentId: student.studentId,
+            timestamp: now.format(),
+            status: "absent",
+            lateMinutes: 0,
+          });
+          await attendance.save();
+          processedCount++;
+          logger.info(
+            `[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 결석 처리 완료`
+          );
+        }
+      }
+
+      // 처리 로그 업데이트
+      await ProcessLog.findByIdAndUpdate(tempLog._id, {
+        processedCount: processedCount,
+        details: `총 ${allStudents.length}명 중 ${processedCount}명 결석 처리됨`,
+      });
+
+      logger.info(
+        `[자동 결석 처리] 완료 - ${processedCount}명의 학생이 결석 처리되었습니다.`
+      );
+    } catch (error) {
+      // 오류 발생 시 임시 로그 삭제
+      await ProcessLog.deleteOne({ _id: tempLog._id });
+      throw error;
+    }
   } catch (error) {
     logger.error("[자동 결석 처리] 오류 발생:", error);
   }
