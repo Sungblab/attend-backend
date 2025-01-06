@@ -1437,27 +1437,30 @@ async function setupAutoAbsentSchedule() {
     const [hour, minute] = settings.autoAbsentTime.split(":").map(Number);
     const cronExpression = `${minute} ${hour} * * 1-5`;
 
+    // 현재 시간이 설정된 시간을 지났는지 확인
+    const now = getCurrentKoreanTime();
+    const currentMinutes = now.hours() * 60 + now.minutes();
+    const scheduledMinutes = hour * 60 + minute;
+
+    // 오늘의 처리 로그 확인
+    const today = now.format("YYYY-MM-DD");
+    const processLog = await ProcessLog.findOne({
+      type: "auto_absent",
+      processDate: today,
+    });
+
+    // 스케줄 설정
     autoAbsentJob = schedule.scheduleJob(cronExpression, processAutoAbsent);
     logger.info(
       `[스케줄러] 자동 결석 처리 스케줄이 ${settings.autoAbsentTime} (KST, 월-금)으로 설정되었습니다.`
     );
 
-    // 현재 시간이 설정된 시간을 지났는지 확인하고, 지났다면 즉시 실행
-    const now = getCurrentKoreanTime();
-    const currentMinutes = now.hours() * 60 + now.minutes();
-    const scheduledMinutes = hour * 60 + minute;
-
-    logger.info(
-      `[스케줄러] 현재 시간: ${now.format("HH:mm")}, 설정된 시간: ${
-        settings.autoAbsentTime
-      }`
-    );
-
+    // 현재 시간이 설정된 시간을 지났고, 아직 처리되지 않았으며, 주말이 아닌 경우에만 즉시 실행
     if (
+      !processLog &&
       now.day() !== 0 &&
       now.day() !== 6 &&
-      currentMinutes >= scheduledMinutes &&
-      !autoAbsentJob.nextInvocation()
+      currentMinutes >= scheduledMinutes
     ) {
       logger.info(
         "[스케줄러] 현재 시간이 설정된 시간을 지났으므로 자동 결석 처리를 즉시 실행합니다."
