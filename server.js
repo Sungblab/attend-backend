@@ -3000,11 +3000,18 @@ async function initializeAttendanceSettings() {
 }
 
 // 서버 시작 시 초기화 함수들 실행
-Promise.all([initializeAttendanceSettings(), setupAutoAbsentSchedule()]).catch(
-  (error) => {
+async function initializeServer() {
+  try {
+    await initializeAttendanceSettings();
+    await setupAutoAbsentSchedule();
+    logger.info("서버 초기화가 완료되었습니다.");
+  } catch (error) {
     logger.error("서버 초기화 중 오류: " + error.message);
   }
-);
+}
+
+// Promise.all 대신 단일 초기화 함수 호출
+initializeServer();
 
 // 엑셀 다운로드 API 추가
 app.get("/api/attendance/export", verifyToken, isAdmin, async (req, res) => {
