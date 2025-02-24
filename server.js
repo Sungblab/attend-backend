@@ -48,7 +48,7 @@ app.use(
     origin: [
       "https://attendhs-admin.netlify.app",
       "https://attendhs.netlify.app",
-      "http://localhost:3000",
+      "http://127.0.0.1:5500",
     ],
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -2655,16 +2655,6 @@ validateEnvVariables();
 // XSS 방지를 위한 미들웨어 추가
 app.use(helmet.xssFilter());
 app.use(helmet.noSniff());
-
-// CORS 설정 강화
-app.use(
-  cors({
-    origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    exposedHeaders: ["Content-Range", "X-Content-Range"],
-  })
-);
 
 // 출결 설정 조회 API
 app.get("/api/settings/attendance", verifyToken, async (req, res) => {
