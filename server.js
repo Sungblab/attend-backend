@@ -2659,11 +2659,7 @@ app.use(helmet.noSniff());
 // CORS 설정 강화
 app.use(
   cors({
-    origin: [
-      "https://attendhs-admin.netlify.app",
-      "https://attendhs.netlify.app",
-      "http://127.0.0.1:5500",
-    ],
+    origin: "*",
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     exposedHeaders: ["Content-Range", "X-Content-Range"],
