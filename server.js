@@ -2662,7 +2662,7 @@ app.use(
     origin: [
       "https://attendhs-admin.netlify.app",
       "https://attendhs.netlify.app",
-      "http://localhost:3000",
+      "http://localhost:5500",
     ],
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
