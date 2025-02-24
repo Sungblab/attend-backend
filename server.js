@@ -43,7 +43,18 @@ const app = express();
 app.set("trust proxy", 1);
 
 // Middleware
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "https://attendhs-admin.netlify.app",
+      "https://attendhs.netlify.app",
+      "http://localhost:3000",
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // rate limiter 설정
@@ -2646,21 +2657,13 @@ app.use(helmet.xssFilter());
 app.use(helmet.noSniff());
 
 // CORS 설정 강화
-// app.use(
-//   cors({
-//     origin:
-//       process.env.NODE_ENV === "production"
-//         ? ["https://attendhs.netlify.app"]
-//         : ["http://localhost:5500"],
-//     methods: ["GET", "POST", "PUT", "DELETE"],
-//     allowedHeaders: ["Content-Type", "Authorization"],
-//     credentials: true,
-//   })
-// );
-
 app.use(
   cors({
-    origin: true, // 모든 origin 허용
+    origin: [
+      "https://attendhs-admin.netlify.app",
+      "https://attendhs.netlify.app",
+      "http://localhost:3000",
+    ],
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
