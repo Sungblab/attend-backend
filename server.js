@@ -2664,9 +2664,9 @@ app.use(
       "https://attendhs.netlify.app",
       "http://127.0.0.1:5500",
     ],
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
+    exposedHeaders: ["Content-Range", "X-Content-Range"],
   })
 );
 
