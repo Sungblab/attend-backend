@@ -466,7 +466,7 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     console.error("Login error:", error);
     res.status(500).json({
       success: false,
-      message: "서버 오류가 발생했습니다.",
+      message: "학번 또는 비밀번호가 일치하지 않습니다.",
     });
   }
 });
@@ -1598,8 +1598,11 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
       };
     }
 
-    // 학생 필터링
-    let userMatchCondition = { isApproved: true };
+    // 학생 필터링 (선생님 제외)
+    let userMatchCondition = {
+      isApproved: true,
+      isTeacher: false, // 선생님 제외
+    };
     if (grade) userMatchCondition.grade = parseInt(grade);
     if (classNum) userMatchCondition.class = parseInt(classNum);
 
