@@ -3658,6 +3658,7 @@ app.post(
         endNumber,
         commonPassword,
         namePrefix,
+        customNames,
       } = req.body;
 
       // 입력값 검증
@@ -3722,7 +3723,14 @@ app.post(
       for (let num = startNum; num <= endNum; num++) {
         const paddedNum = num.toString().padStart(2, "0");
         const studentId = `${gradeNum}${classNum}${paddedNum}`;
-        const name = `${prefix}${num}번`;
+
+        // 이름 설정 (개별 이름 또는 접두사 사용)
+        let name;
+        if (customNames && customNames[num]) {
+          name = customNames[num];
+        } else {
+          name = `${prefix}${num}번`;
+        }
 
         // 이미 존재하는 학번인지 확인
         const existingUser = await User.findOne({ studentId });
