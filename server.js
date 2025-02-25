@@ -3643,3 +3643,117 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
     });
   }
 });
+
+// 학생들을 일괄 생성하는 API
+app.post(
+  "/api/admin/bulk-create-users",
+  verifyToken,
+  isAdmin,
+  async (req, res) => {
+    try {
+      const {
+        grade,
+        classNumber,
+        startNumber,
+        endNumber,
+        commonPassword,
+        namePrefix,
+      } = req.body;
+
+      // 입력값 검증
+      if (
+        !grade ||
+        !classNumber ||
+        !startNumber ||
+        !endNumber ||
+        !commonPassword
+      ) {
+        return res.status(400).json({
+          message: "학년, 반, 시작 번호, 끝 번호, 공통 비밀번호가 필요합니다.",
+        });
+      }
+
+      const gradeNum = Number(grade);
+      const classNum = Number(classNumber);
+      const startNum = Number(startNumber);
+      const endNum = Number(endNumber);
+
+      // 값 범위 검증
+      if (![1, 2, 3].includes(gradeNum)) {
+        return res
+          .status(400)
+          .json({ message: "유효하지 않은 학년입니다. (1-3)" });
+      }
+      if (classNum < 1 || classNum > 6) {
+        return res
+          .status(400)
+          .json({ message: "유효하지 않은 반입니다. (1-6)" });
+      }
+      if (
+        startNum < 1 ||
+        startNum > 100 ||
+        endNum < 1 ||
+        endNum > 100 ||
+        startNum > endNum
+      ) {
+        return res
+          .status(400)
+          .json({ message: "유효하지 않은 번호 범위입니다. (1-100)" });
+      }
+
+      // 비밀번호 검증
+      const { isValid } = validatePassword(commonPassword);
+      if (!isValid) {
+        return res.status(400).json({
+          message: "비밀번호는 8자 이상이어야 합니다.",
+        });
+      }
+
+      // 비밀번호 해싱
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(commonPassword, salt);
+
+      // 생성할 학생 목록
+      const usersToCreate = [];
+      const existingStudentIds = [];
+      const prefix = namePrefix || "";
+
+      // 학번 생성 (학년 + 반 + 번호 2자리)
+      for (let num = startNum; num <= endNum; num++) {
+        const paddedNum = num.toString().padStart(2, "0");
+        const studentId = `${gradeNum}${classNum}${paddedNum}`;
+        const name = `${prefix}${num}번`;
+
+        // 이미 존재하는 학번인지 확인
+        const existingUser = await User.findOne({ studentId });
+        if (existingUser) {
+          existingStudentIds.push(studentId);
+          continue;
+        }
+
+        usersToCreate.push({
+          studentId,
+          name,
+          password: hashedPassword,
+          grade: gradeNum,
+          class: classNum,
+          number: num,
+        });
+      }
+
+      // 학생들 일괄 생성
+      if (usersToCreate.length > 0) {
+        await User.insertMany(usersToCreate);
+      }
+
+      res.status(201).json({
+        message: `${usersToCreate.length}명의 학생이 생성되었습니다.`,
+        skippedStudentIds: existingStudentIds,
+        createdCount: usersToCreate.length,
+      });
+    } catch (error) {
+      console.error("학생 일괄 생성 오류:", error);
+      res.status(500).json({ message: "서버 오류가 발생했습니다." });
+    }
+  }
+);
