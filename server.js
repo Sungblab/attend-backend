@@ -967,101 +967,90 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
         });
       }
 
-      // 오늘 날짜의 출석 기록 확인
-      const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
-      const tomorrow = moment(today).add(1, "days");
-      const existingAttendance = await Attendance.findOne({
-        studentId,
-        timestamp: {
-          $gte: today.format(),
-          $lt: tomorrow.format(),
-        },
-      });
+      // 트랜잭션 시작
+      const session = await mongoose.startSession();
+      let result;
 
-      if (existingAttendance) {
-        let statusMessage = "";
-        let statusType = "";
+      try {
+        await session.withTransaction(async () => {
+          const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
+          const tomorrow = moment(today).add(1, "days");
 
-        switch (existingAttendance.status) {
-          case "present":
-            statusMessage = "이미 출석 처리되었습니다.";
-            statusType = "ALREADY_PRESENT";
-            break;
-          case "late":
-            statusMessage = `이미 지각 처리되었습니다. (${existingAttendance.lateMinutes}분 지각)`;
-            statusType = "ALREADY_LATE";
-            break;
-          case "absent":
-            if (existingAttendance.isExcused) {
-              statusMessage = "이미 인정결석 처리되었습니다.";
-              statusType = "ALREADY_EXCUSED";
-            } else {
-              statusMessage = "이미 결석 처리되었습니다.";
-              statusType = "ALREADY_ABSENT";
+          // findOne을 트랜잭션 내에서 실행하고 lock 설정
+          const existingAttendance = await Attendance.findOne({
+            studentId,
+            timestamp: {
+              $gte: today.format(),
+              $lt: tomorrow.format(),
+            },
+          }).session(session);
+
+          if (existingAttendance) {
+            let statusMessage = "";
+            switch (existingAttendance.status) {
+              case "present":
+                statusMessage = "이미 출석 처리되었습니다.";
+                break;
+              case "late":
+                statusMessage = `이미 지각 처리되었습니다. (${existingAttendance.lateMinutes}분 지각)`;
+                break;
+              case "absent":
+                statusMessage = existingAttendance.isExcused 
+                  ? "이미 인정결석 처리되었습니다."
+                  : "이미 결석 처리되었습니다.";
+                break;
             }
-            break;
-        }
 
-        return res.status(200).json({
-          success: false,
-          message: statusMessage,
-          type: statusType,
-          attendance: {
-            ...existingAttendance.toObject(),
-            name: student.name,
-          },
+            result = {
+              success: false,
+              message: statusMessage,
+              type: `ALREADY_${existingAttendance.status.toUpperCase()}`,
+              attendance: {
+                ...existingAttendance.toObject(),
+                name: student.name,
+              },
+            };
+            return;
+          }
+
+          // 출석 상태 결정
+          const attendanceStatus = await determineAttendanceStatus(timestamp, student);
+          if (!attendanceStatus.success) {
+            result = {
+              success: false,
+              message: attendanceStatus.message,
+              type: attendanceStatus.status.toUpperCase(),
+              details: attendanceStatus.details || {},
+            };
+            return;
+          }
+
+          // 새로운 출석 기록 생성
+          const attendance = new Attendance({
+            studentId,
+            timestamp,
+            status: attendanceStatus.status,
+            lateMinutes: attendanceStatus.lateMinutes,
+          });
+
+          await attendance.save({ session });
+
+          result = {
+            success: true,
+            message: getStatusMessage(attendance),
+            type: `${attendance.status.toUpperCase()}_SUCCESS`,
+            attendance: {
+              ...attendance.toObject(),
+              name: student.name,
+            },
+          };
         });
+      } finally {
+        await session.endSession();
       }
 
-      // 출석 상태 결정
-      const attendanceStatus = await determineAttendanceStatus(timestamp, student);
-      if (!attendanceStatus.success) {
-        return res.status(200).json({
-          success: false,
-          message: attendanceStatus.message,
-          type: attendanceStatus.status.toUpperCase(),
-          details: attendanceStatus.details || {},
-        });
-      }
+      return res.status(result.success ? 201 : 200).json(result);
 
-      // 새로운 출석 기록 생성
-      const attendance = new Attendance({
-        studentId,
-        timestamp,
-        status: attendanceStatus.status,
-        lateMinutes: attendanceStatus.lateMinutes,
-      });
-
-      await attendance.save();
-
-      // 상태별 메시지 설정
-      let responseMessage = "";
-      let responseType = "";
-
-      switch (attendance.status) {
-        case "present":
-          responseMessage = "정상 출석 처리되었습니다.";
-          responseType = "PRESENT_SUCCESS";
-          break;
-        case "late":
-          responseMessage = `지각 처리되었습니다. (${attendance.lateMinutes}분 지각)`;
-          responseType = "LATE_SUCCESS";
-          break;
-        case "absent":
-          responseMessage = "결석 처리되었습니다.";
-          responseType = "ABSENT_SUCCESS";
-          break;
-      }
-
-      res.status(201).json({
-        success: true,
-        message: responseMessage,
-        type: responseType,
-        attendance: {
-          ...attendance.toObject(),
-          name: student.name,
-        },
-      });
     } catch (cryptoError) {
       console.error("복호화 오류:", cryptoError);
       return res.status(422).json({
@@ -1081,6 +1070,22 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
     });
   }
 });
+
+// 상태 메시지 생성 함수
+function getStatusMessage(attendance) {
+  switch (attendance.status) {
+    case "present":
+      return "출석 처리되었습니다.";
+    case "late":
+      return `지각 처리되었습니다. (${attendance.lateMinutes}분 지각)`;
+    case "absent":
+      return attendance.isExcused 
+        ? "인정결석 처리되었습니다."
+        : "결석 처리되었습니다.";
+    default:
+      return "처리되었습니다.";
+  }
+}
 
 // 자동 결석 처리 함수 수정
 async function processAutoAbsent() {
@@ -1135,62 +1140,70 @@ async function processAutoAbsent() {
         return;
       }
 
-      // 출석하지 않은 학생들 조회
-      const allStudents = await User.find({
-        isApproved: true,
-        isAdmin: false,
-        isReader: false,
-        isTeacher: false,
-      });
-
-      // 오늘 출석 기록이 있는 학생들 조회 (모든 상태 포함)
-      const todayAttendances = await Attendance.find({
-        timestamp: {
-          $gte: moment(today).startOf("day").format(),
-          $lt: moment(today).add(1, "day").startOf("day").format(),
-        },
-      });
-
-      // 오늘 출석 기록이 있는 학생들의 ID 목록
-      const studentsWithAttendance = todayAttendances.map((a) => a.studentId);
-
-      // 오늘 출석 기록이 전혀 없는 학생들만 필터링
-      const absentStudents = allStudents.filter(
-        (student) => !studentsWithAttendance.includes(student.studentId)
-      );
-
-      // 결석 처리
+      // 트랜잭션 시작
+      const session = await mongoose.startSession();
       let processedCount = 0;
-      for (const student of absentStudents) {
-        // 결석 처리 전에 한번 더 확인
-        const hasAttendance = await Attendance.findOne({
-          studentId: student.studentId,
-          timestamp: {
-            $gte: moment(today).startOf("day").format(),
-            $lt: moment(today).add(1, "day").startOf("day").format(),
-          },
-        });
 
-        // 정말로 출석 기록이 없는 경우에만 결석 처리
-        if (!hasAttendance) {
-          const attendance = new Attendance({
-            studentId: student.studentId,
-            timestamp: now.format(),
-            status: "absent",
-            lateMinutes: 0,
-          });
-          await attendance.save();
-          processedCount++;
-          logger.info(
-            `[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 결석 처리 완료`
+      try {
+        await session.withTransaction(async () => {
+          // 출석하지 않은 학생들 조회
+          const allStudents = await User.find({
+            isApproved: true,
+            isAdmin: false,
+            isReader: false,
+            isTeacher: false,
+          }).session(session);
+
+          // 오늘 출석 기록이 있는 학생들 조회
+          const todayAttendances = await Attendance.find({
+            timestamp: {
+              $gte: moment(today).startOf("day").format(),
+              $lt: moment(today).add(1, "day").startOf("day").format(),
+            },
+          }).session(session);
+
+          const studentsWithAttendance = todayAttendances.map((a) => a.studentId);
+
+          // 오늘 출석 기록이 없는 학생들만 필터링
+          const absentStudents = allStudents.filter(
+            (student) => !studentsWithAttendance.includes(student.studentId)
           );
-        }
+
+          // 결석 처리
+          for (const student of absentStudents) {
+            // 결석 처리 전에 한번 더 확인 (트랜잭션 내에서)
+            const hasAttendance = await Attendance.findOne({
+              studentId: student.studentId,
+              timestamp: {
+                $gte: moment(today).startOf("day").format(),
+                $lt: moment(today).add(1, "day").startOf("day").format(),
+              },
+            }).session(session);
+
+            // 정말로 출석 기록이 없는 경우에만 결석 처리
+            if (!hasAttendance) {
+              const attendance = new Attendance({
+                studentId: student.studentId,
+                timestamp: now.format(),
+                status: "absent",
+                lateMinutes: 0,
+              });
+              await attendance.save({ session });
+              processedCount++;
+              logger.info(
+                `[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 결석 처리 완료`
+              );
+            }
+          }
+        });
+      } finally {
+        await session.endSession();
       }
 
       // 처리 로그 업데이트
       await ProcessLog.findByIdAndUpdate(tempLog._id, {
         processedCount: processedCount,
-        details: `총 ${allStudents.length}명 중 ${processedCount}명 결석 처리됨`,
+        details: `총 ${processedCount}명 결석 처리됨`,
       });
 
       logger.info(
