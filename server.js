@@ -989,15 +989,15 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
             let statusMessage = "";
             switch (existingAttendance.status) {
               case "present":
-                statusMessage = "이미 출석 처리되었습니다.";
+                statusMessage = "이미 오늘 출석 처리되었습니다. 하루에 한 번만 출석이 가능합니다.";
                 break;
               case "late":
-                statusMessage = `이미 지각 처리되었습니다. (${existingAttendance.lateMinutes}분 지각)`;
+                statusMessage = `이미 오늘 지각 처리되었습니다. (${existingAttendance.lateMinutes}분 지각)`;
                 break;
               case "absent":
                 statusMessage = existingAttendance.isExcused 
-                  ? "이미 인정결석 처리되었습니다."
-                  : "이미 결석 처리되었습니다.";
+                  ? "이미 오늘 인정결석 처리되었습니다."
+                  : "이미 오늘 결석 처리되었습니다.";
                 break;
             }
 
