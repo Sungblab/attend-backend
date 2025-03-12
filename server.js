@@ -1096,27 +1096,6 @@ async function processAutoAbsent() {
 
     logger.info(`[자동 결석 처리] 시작 - ${today} ${currentTime}`);
 
-    // 출석 설정 가져오기
-    const settings = await AttendanceSettings.findOne().sort({ updatedAt: -1 });
-    if (!settings || !settings.autoAbsentTime) {
-      logger.error("[자동 결석 처리] 출석 설정을 찾을 수 없어 처리를 중단합니다.");
-      return;
-    }
-
-    // 현재 시간이 자동 결석 처리 시간보다 이전인지 확인
-    const [absentHour, absentMinute] = settings.autoAbsentTime.split(":").map(Number);
-    const absentTimeToday = moment().tz("Asia/Seoul").set({
-      hour: absentHour,
-      minute: absentMinute,
-      second: 0,
-      millisecond: 0
-    });
-
-    if (now.isBefore(absentTimeToday)) {
-      logger.info(`[자동 결석 처리] 현재 시간(${currentTime})이 자동 결석 처리 시간(${settings.autoAbsentTime}) 이전이므로 처리를 중단합니다.`);
-      return;
-    }
-
     // 이미 오늘 자동 결석 처리가 실행되었는지 확인
     const processLog = await ProcessLog.findOne({
       type: "auto_absent",
@@ -1167,63 +1146,41 @@ async function processAutoAbsent() {
 
       try {
         await session.withTransaction(async () => {
-          // 오늘 날짜의 시작과 끝 설정
-          const todayStart = moment(today).startOf("day").format();
-          const todayEnd = moment(today).add(1, "day").startOf("day").format();
-          
-          // 출석 마감 시간 설정
-          const cutoffTime = moment(today).set({
-            hour: absentHour,
-            minute: absentMinute,
-            second: 0,
-            millisecond: 0
-          }).format();
-          
-          logger.info(`[자동 결석 처리] 출석 마감 시간: ${settings.autoAbsentTime} (${cutoffTime})`);
-          
-          // 1. 모든 활성 학생 조회
+          // 출석하지 않은 학생들 조회
           const allStudents = await User.find({
             isApproved: true,
             isAdmin: false,
             isReader: false,
             isTeacher: false,
           }).session(session);
-          
-          logger.info(`[자동 결석 처리] 전체 학생 수: ${allStudents.length}명`);
-          
-          // 2. 오늘 출석 기록이 있는 학생 ID 목록 조회
-          const attendanceRecords = await Attendance.find({
+
+          // 오늘 출석 기록이 있는 학생들 조회
+          const todayAttendances = await Attendance.find({
             timestamp: {
-              $gte: todayStart,
-              $lt: todayEnd
-            }
+              $gte: moment(today).startOf("day").format(),
+              $lt: moment(today).add(1, "day").startOf("day").format(),
+            },
           }).session(session);
-          
-          // 이미 출석 기록이 있는 학생 ID 목록 생성 (문자열로 변환)
-          const studentsWithAttendance = new Set(
-            attendanceRecords.map(record => record.studentId.toString())
+
+          // studentId를 문자열로 변환하여 비교
+          const studentsWithAttendance = todayAttendances.map((a) => String(a.studentId));
+
+          // 오늘 출석 기록이 없는 학생들만 필터링 (문자열 비교)
+          const absentStudents = allStudents.filter(
+            (student) => !studentsWithAttendance.includes(String(student.studentId))
           );
-          
-          logger.info(`[자동 결석 처리] 오늘 이미 출석 기록이 있는 학생 수: ${studentsWithAttendance.size}명`);
-          
-          // 3. 출석 기록이 없는 학생만 필터링
-          const studentsWithoutAttendance = allStudents.filter(
-            student => !studentsWithAttendance.has(student.studentId.toString())
-          );
-          
-          logger.info(`[자동 결석 처리] 출석 기록이 없는 학생 수: ${studentsWithoutAttendance.length}명`);
-          
-          // 4. 출석 기록이 없는 학생들에 대해 결석 처리
-          for (const student of studentsWithoutAttendance) {
-            // 결석 처리 전 한번 더 확인 (트랜잭션 내에서)
+
+          // 결석 처리
+          for (const student of absentStudents) {
+            // 결석 처리 전에 한번 더 확인 (트랜잭션 내에서)
             const hasAttendance = await Attendance.findOne({
-              studentId: student.studentId,
+              studentId: String(student.studentId),
               timestamp: {
-                $gte: todayStart,
-                $lt: todayEnd
-              }
+                $gte: moment(today).startOf("day").format(),
+                $lt: moment(today).add(1, "day").startOf("day").format(),
+              },
             }).session(session);
-            
+
             // 정말로 출석 기록이 없는 경우에만 결석 처리
             if (!hasAttendance) {
               const attendance = new Attendance({
@@ -1239,8 +1196,6 @@ async function processAutoAbsent() {
               );
             }
           }
-          
-          logger.info(`[자동 결석 처리] 총 ${processedCount}명 결석 처리 완료`);
         });
       } finally {
         await session.endSession();
