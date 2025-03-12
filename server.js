@@ -1154,7 +1154,7 @@ async function processAutoAbsent() {
             isTeacher: false,
           }).session(session);
 
-          // 오늘 출석 기록이 있는 학생들 조회
+          // 오늘 출석 기록이 있는 학생들 조회 (모든 상태 포함)
           const todayAttendances = await Attendance.find({
             timestamp: {
               $gte: moment(today).startOf("day").format(),
@@ -1162,6 +1162,7 @@ async function processAutoAbsent() {
             },
           }).session(session);
 
+          // 이미 출석 기록이 있는 학생들의 ID 목록 생성
           const studentsWithAttendance = todayAttendances.map((a) => a.studentId);
 
           // 오늘 출석 기록이 없는 학생들만 필터링
@@ -1171,29 +1172,17 @@ async function processAutoAbsent() {
 
           // 결석 처리
           for (const student of absentStudents) {
-            // 결석 처리 전에 한번 더 확인 (트랜잭션 내에서)
-            const hasAttendance = await Attendance.findOne({
+            const attendance = new Attendance({
               studentId: student.studentId,
-              timestamp: {
-                $gte: moment(today).startOf("day").format(),
-                $lt: moment(today).add(1, "day").startOf("day").format(),
-              },
-            }).session(session);
-
-            // 정말로 출석 기록이 없는 경우에만 결석 처리
-            if (!hasAttendance) {
-              const attendance = new Attendance({
-                studentId: student.studentId,
-                timestamp: now.format(),
-                status: "absent",
-                lateMinutes: 0,
-              });
-              await attendance.save({ session });
-              processedCount++;
-              logger.info(
-                `[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 결석 처리 완료`
-              );
-            }
+              timestamp: now.format(),
+              status: "absent",
+              lateMinutes: 0,
+            });
+            await attendance.save({ session });
+            processedCount++;
+            logger.info(
+              `[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 결석 처리 완료`
+            );
           }
         });
       } finally {
