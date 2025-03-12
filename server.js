@@ -1096,6 +1096,27 @@ async function processAutoAbsent() {
 
     logger.info(`[자동 결석 처리] 시작 - ${today} ${currentTime}`);
 
+    // 출석 설정 가져오기
+    const settings = await AttendanceSettings.findOne().sort({ updatedAt: -1 });
+    if (!settings || !settings.autoAbsentTime) {
+      logger.error("[자동 결석 처리] 출석 설정을 찾을 수 없어 처리를 중단합니다.");
+      return;
+    }
+
+    // 현재 시간이 자동 결석 처리 시간보다 이전인지 확인
+    const [absentHour, absentMinute] = settings.autoAbsentTime.split(":").map(Number);
+    const absentTimeToday = moment().tz("Asia/Seoul").set({
+      hour: absentHour,
+      minute: absentMinute,
+      second: 0,
+      millisecond: 0
+    });
+
+    if (now.isBefore(absentTimeToday)) {
+      logger.info(`[자동 결석 처리] 현재 시간(${currentTime})이 자동 결석 처리 시간(${settings.autoAbsentTime}) 이전이므로 처리를 중단합니다.`);
+      return;
+    }
+
     // 이미 오늘 자동 결석 처리가 실행되었는지 확인
     const processLog = await ProcessLog.findOne({
       type: "auto_absent",
@@ -1162,13 +1183,32 @@ async function processAutoAbsent() {
             },
           }).session(session);
 
+          // 디버깅: 오늘 출석 기록 확인
+          logger.info(`[자동 결석 처리] 오늘 출석 기록 수: ${todayAttendances.length}`);
+          
+          // 출석 마감 시간 설정
+          const absentTimeLimit = moment(today).set({
+            hour: absentHour,
+            minute: absentMinute,
+            second: 0,
+            millisecond: 0
+          }).format();
+          
+          logger.info(`[자동 결석 처리] 출석 마감 시간: ${settings.autoAbsentTime} (${absentTimeLimit})`);
+          
           // 이미 출석 기록이 있는 학생들의 ID 목록 생성
-          const studentsWithAttendance = todayAttendances.map((a) => a.studentId);
+          const studentsWithAttendance = todayAttendances.map((a) => a.studentId.toString());
 
+          // 디버깅: 전체 학생 수 확인
+          logger.info(`[자동 결석 처리] 전체 학생 수: ${allStudents.length}`);
+          
           // 오늘 출석 기록이 없는 학생들만 필터링
           const absentStudents = allStudents.filter(
-            (student) => !studentsWithAttendance.includes(student.studentId)
+            (student) => !studentsWithAttendance.includes(student.studentId.toString())
           );
+          
+          // 디버깅: 결석 처리할 학생 수 확인
+          logger.info(`[자동 결석 처리] 결석 처리할 학생 수: ${absentStudents.length}`);
 
           // 결석 처리
           for (const student of absentStudents) {
