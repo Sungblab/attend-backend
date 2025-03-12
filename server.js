@@ -103,7 +103,6 @@ const AttendanceSettingsSchema = new mongoose.Schema({
   lateTime: { type: String, required: true, default: "09:00" },
   updatedAt: { type: Date, default: Date.now },
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  autoAbsentTime: { type: String, required: true, default: "09:00" },
 });
 
 const AttendanceSettings = mongoose.model(
@@ -1095,154 +1094,12 @@ async function processAutoAbsent() {
     const currentTime = now.format("HH:mm:ss");
 
     logger.info(`[자동 결석 처리] 시작 - ${today} ${currentTime}`);
-
-    // 이미 오늘 자동 결석 처리가 실행되었는지 확인
-    const processLog = await ProcessLog.findOne({
-      type: "auto_absent",
-      processDate: today,
-    });
-
-    if (processLog) {
-      logger.info(
-        `[자동 결석 처리] 오늘(${today})은 이미 ${processLog.processTime}에 처리되었습니다.`
-      );
-      return;
-    }
-
-    // 실행 중인 프로세스를 표시하기 위한 임시 로그 생성
-    const tempLog = new ProcessLog({
-      type: "auto_absent",
-      processDate: today,
-      processTime: currentTime,
-      processedCount: 0,
-      details: "처리 중...",
-    });
-    await tempLog.save();
-
-    try {
-      // 주말인 경우 처리하지 않음
-      if (now.day() === 0 || now.day() === 6) {
-        logger.info("[자동 결석 처리] 주말이므로 처리하지 않습니다.");
-        await ProcessLog.deleteOne({ _id: tempLog._id });
-        return;
-      }
-
-      // 휴일 체크
-      const holiday = await Holiday.findOne({
-        date: now.startOf("day").toDate(),
-      });
-
-      if (holiday) {
-        logger.info(
-          `[자동 결석 처리] ${holiday.reason}은(는) 휴일이므로 처리하지 않습니다.`
-        );
-        await ProcessLog.deleteOne({ _id: tempLog._id });
-        return;
-      }
-
-      // 트랜잭션 시작
-      const session = await mongoose.startSession();
-      let processedCount = 0;
-
-      try {
-        await session.withTransaction(async () => {
-          // 출석하지 않은 학생들 조회
-          const allStudents = await User.find({
-            isApproved: true,
-            isAdmin: false,
-            isReader: false,
-            isTeacher: false,
-          }).session(session);
-
-          // 오늘 출석 기록이 있는 학생들 조회
-          const todayAttendances = await Attendance.find({
-            timestamp: {
-              $gte: moment(today).startOf("day").format(),
-              $lt: moment(today).add(1, "day").startOf("day").format(),
-            },
-          }).session(session);
-
-          // 출석한 학생들의 ID를 Set으로 저장 (중복 제거 및 빠른 검색)
-          const attendedStudentIds = new Set();
-          todayAttendances.forEach(attendance => {
-            attendedStudentIds.add(String(attendance.studentId));
-          });
-
-          // 오늘 출석 기록이 없는 학생들만 필터링
-          const absentStudents = allStudents.filter(
-            student => !attendedStudentIds.has(String(student.studentId))
-          );
-
-          logger.info(`[자동 결석 처리] 전체 학생 수: ${allStudents.length}, 출석한 학생 수: ${attendedStudentIds.size}, 결석 대상 학생 수: ${absentStudents.length}`);
-
-          // 결석 처리
-          for (const student of absentStudents) {
-            try {
-              // 결석 처리 전에 한번 더 확인 (트랜잭션 내에서)
-              const hasAttendance = await Attendance.findOne({
-                studentId: String(student.studentId),
-                timestamp: {
-                  $gte: moment(today).startOf("day").format(),
-                  $lt: moment(today).add(1, "day").startOf("day").format(),
-                },
-              }).session(session);
-
-              // 정말로 출석 기록이 없는 경우에만 결석 처리
-              if (!hasAttendance) {
-                const attendance = new Attendance({
-                  studentId: student.studentId,
-                  timestamp: now.format(),
-                  status: "absent",
-                  lateMinutes: 0,
-                });
-                await attendance.save({ session });
-                processedCount++;
-                logger.info(
-                  `[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 결석 처리 완료`
-                );
-              } else {
-                logger.info(
-                  `[자동 결석 처리] 학생 ${student.studentId} (${student.name})은(는) 이미 출석 기록이 있어 결석 처리하지 않음`
-                );
-              }
-            } catch (error) {
-              logger.error(`[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 처리 중 오류: ${error.message}`);
-            }
-          }
-        });
-      } finally {
-        await session.endSession();
-      }
-
-      // 처리 로그 업데이트
-      await ProcessLog.findByIdAndUpdate(tempLog._id, {
-        processedCount: processedCount,
-        details: `총 ${processedCount}명 결석 처리됨`,
-      });
-
-      logger.info(
-        `[자동 결석 처리] 완료 - ${processedCount}명의 학생이 결석 처리되었습니다.`
-      );
-    } catch (error) {
-      // 오류 발생 시 임시 로그 삭제
-      await ProcessLog.deleteOne({ _id: tempLog._id });
-      throw error;
-    }
+    logger.info(`[자동 결석 처리] 자동 결석 처리 기능이 비활성화되었습니다.`);
+    logger.info(`[자동 결석 처리] 완료 - 자동 결석 처리 기능이 비활성화되었습니다.`);
   } catch (error) {
     logger.error("[자동 결석 처리] 오류 발생:", error);
   }
 }
-
-// ProcessLog 모델 수정
-const ProcessLogSchema = new mongoose.Schema({
-  type: { type: String, required: true },
-  processDate: { type: String, required: true }, // YYYY-MM-DD 형식
-  processTime: { type: String, required: true }, // HH:mm:ss 형식
-  processedCount: { type: Number, required: true },
-  details: { type: String },
-});
-
-const ProcessLog = mongoose.model("ProcessLog", ProcessLogSchema);
 
 // 수동 지각 처리 API
 app.post(
@@ -1477,67 +1334,12 @@ async function setupAutoAbsentSchedule() {
       logger.info("[스케줄러] 기존 자동 결석 처리 스케줄이 취소되었습니다.");
     }
 
-    const settings = await AttendanceSettings.findOne().sort({ updatedAt: -1 });
-    if (!settings || !settings.autoAbsentTime) {
-      logger.error(
-        "[스케줄러] 출석 설정을 찾을 수 없어 기본값으로 스케줄을 설정합니다."
-      );
-      const defaultSettings = new AttendanceSettings({
-        startTime: "07:30",
-        normalTime: "08:03",
-        lateTime: "09:00",
-        autoAbsentTime: "09:00",
-      });
-      await defaultSettings.save();
-      autoAbsentJob = schedule.scheduleJob("0 9 * * 1-5", processAutoAbsent);
-      logger.info(
-        "[스케줄러] 자동 결석 처리 스케줄이 기본값(09:00, 월-금)으로 설정되었습니다."
-      );
-      return {
-        success: true,
-        message: "자동 결석 처리 시간이 기본값(09:00)으로 설정되었습니다.",
-        nextInvocation: autoAbsentJob.nextInvocation(),
-      };
-    }
-
-    const [hour, minute] = settings.autoAbsentTime.split(":").map(Number);
-    const cronExpression = `${minute} ${hour} * * 1-5`;
-
-    // 현재 시간이 설정된 시간을 지났는지 확인
-    const now = getCurrentKoreanTime();
-    const currentMinutes = now.hours() * 60 + now.minutes();
-    const scheduledMinutes = hour * 60 + minute;
-
-    // 오늘의 처리 로그 확인
-    const today = now.format("YYYY-MM-DD");
-    const processLog = await ProcessLog.findOne({
-      type: "auto_absent",
-      processDate: today,
-    });
-
-    // 스케줄 설정
-    autoAbsentJob = schedule.scheduleJob(cronExpression, processAutoAbsent);
-    logger.info(
-      `[스케줄러] 자동 결석 처리 스케줄이 ${settings.autoAbsentTime} (KST, 월-금)으로 설정되었습니다.`
-    );
-
-    // 현재 시간이 설정된 시간을 지났고, 아직 처리되지 않았으며, 주말이 아닌 경우에만 즉시 실행
-    if (
-      !processLog &&
-      now.day() !== 0 &&
-      now.day() !== 6 &&
-      currentMinutes >= scheduledMinutes
-    ) {
-      logger.info(
-        "[스케줄러] 현재 시간이 설정된 시간을 지났으므로 자동 결석 처리를 즉시 실행합니다."
-      );
-      await processAutoAbsent();
-    }
-
+    logger.info("[스케줄러] 자동 결석 처리 기능이 비활성화되었습니다.");
+    
     return {
       success: true,
-      message: `자동 결석 처리 시간이 ${settings.autoAbsentTime}으로 설정되었습니다.`,
-      nextInvocation: autoAbsentJob.nextInvocation(),
+      message: "자동 결석 처리 기능이 비활성화되었습니다.",
+      nextInvocation: null,
     };
   } catch (error) {
     logger.error(
@@ -1550,15 +1352,14 @@ async function setupAutoAbsentSchedule() {
 // 출석 설정이 변경될 때마다 스케줄 재설정
 app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
   try {
-    const { startTime, normalTime, lateTime, autoAbsentTime } = req.body;
+    const { startTime, normalTime, lateTime } = req.body;
 
     // 시간 형식 검증 (HH:mm)
     const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
     if (
       !timeRegex.test(startTime) ||
       !timeRegex.test(normalTime) ||
-      !timeRegex.test(lateTime) ||
-      !timeRegex.test(autoAbsentTime)
+      !timeRegex.test(lateTime)
     ) {
       return res.status(400).json({
         success: false,
@@ -1570,12 +1371,10 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
     const start = moment(startTime, "HH:mm");
     const normal = moment(normalTime, "HH:mm");
     const late = moment(lateTime, "HH:mm");
-    const autoAbsent = moment(autoAbsentTime, "HH:mm");
 
     if (
       start.isAfter(normal) ||
-      normal.isAfter(late) ||
-      late.isAfter(autoAbsent)
+      normal.isAfter(late)
     ) {
       return res.status(400).json({
         success: false,
@@ -1587,7 +1386,6 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
       startTime,
       normalTime,
       lateTime,
-      autoAbsentTime,
       updatedBy: req.user.id,
     });
 
@@ -1617,7 +1415,6 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
         startTime: settings.startTime,
         normalTime: settings.normalTime,
         lateTime: settings.lateTime,
-        autoAbsentTime: settings.autoAbsentTime,
         updatedAt: settings.updatedAt,
         updatedBy: req.user.name,
       },
@@ -2723,7 +2520,6 @@ app.get("/api/settings/attendance", verifyToken, async (req, res) => {
         startTime: "07:30",
         normalTime: "08:03",
         lateTime: "09:00",
-        autoAbsentTime: "09:00",
       });
       await defaultSettings.save();
       return res.json({
@@ -2732,7 +2528,6 @@ app.get("/api/settings/attendance", verifyToken, async (req, res) => {
           startTime: defaultSettings.startTime,
           normalTime: defaultSettings.normalTime,
           lateTime: defaultSettings.lateTime,
-          autoAbsentTime: defaultSettings.autoAbsentTime,
           updatedAt: defaultSettings.updatedAt,
           updatedBy: null,
         },
@@ -2745,7 +2540,6 @@ app.get("/api/settings/attendance", verifyToken, async (req, res) => {
         startTime: settings.startTime,
         normalTime: settings.normalTime,
         lateTime: settings.lateTime,
-        autoAbsentTime: settings.autoAbsentTime,
         updatedAt: settings.updatedAt,
         updatedBy: settings.updatedBy?.name,
       },
@@ -3546,32 +3340,6 @@ app.delete("/api/device", verifyToken, async (req, res) => {
   }
 });
 
-// 처리 로그 조회 API
-app.get("/api/process-logs", verifyToken, isAdmin, async (req, res) => {
-  try {
-    const logs = await ProcessLog.find()
-      .sort({ processDate: -1, processTime: -1 })
-      .limit(20); // 최근 20개 로그만 반환
-
-    res.json({
-      success: true,
-      logs: logs.map((log) => ({
-        type: log.type,
-        processDate: log.processDate,
-        processTime: log.processTime,
-        processedCount: log.processedCount,
-        details: log.details,
-      })),
-    });
-  } catch (error) {
-    console.error("처리 로그 조회 중 오류:", error);
-    res.status(500).json({
-      success: false,
-      message: "처리 로그 조회 중 오류가 발생했습니다.",
-    });
-  }
-});
-
 // 출결 설정 조회 API
 app.get("/api/settings/attendance", verifyToken, async (req, res) => {
   try {
@@ -3587,7 +3355,6 @@ app.get("/api/settings/attendance", verifyToken, async (req, res) => {
           startTime: "07:30",
           normalTime: "08:03",
           lateTime: "09:00",
-          autoAbsentTime: "09:00",
           updatedAt: new Date(),
           updatedBy: null,
         },
