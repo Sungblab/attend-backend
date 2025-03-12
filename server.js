@@ -1162,38 +1162,51 @@ async function processAutoAbsent() {
             },
           }).session(session);
 
-          // studentId를 문자열로 변환하여 비교
-          const studentsWithAttendance = todayAttendances.map((a) => String(a.studentId));
+          // 출석한 학생들의 ID를 Set으로 저장 (중복 제거 및 빠른 검색)
+          const attendedStudentIds = new Set();
+          todayAttendances.forEach(attendance => {
+            attendedStudentIds.add(String(attendance.studentId));
+          });
 
-          // 오늘 출석 기록이 없는 학생들만 필터링 (문자열 비교)
+          // 오늘 출석 기록이 없는 학생들만 필터링
           const absentStudents = allStudents.filter(
-            (student) => !studentsWithAttendance.includes(String(student.studentId))
+            student => !attendedStudentIds.has(String(student.studentId))
           );
+
+          logger.info(`[자동 결석 처리] 전체 학생 수: ${allStudents.length}, 출석한 학생 수: ${attendedStudentIds.size}, 결석 대상 학생 수: ${absentStudents.length}`);
 
           // 결석 처리
           for (const student of absentStudents) {
-            // 결석 처리 전에 한번 더 확인 (트랜잭션 내에서)
-            const hasAttendance = await Attendance.findOne({
-              studentId: String(student.studentId),
-              timestamp: {
-                $gte: moment(today).startOf("day").format(),
-                $lt: moment(today).add(1, "day").startOf("day").format(),
-              },
-            }).session(session);
+            try {
+              // 결석 처리 전에 한번 더 확인 (트랜잭션 내에서)
+              const hasAttendance = await Attendance.findOne({
+                studentId: String(student.studentId),
+                timestamp: {
+                  $gte: moment(today).startOf("day").format(),
+                  $lt: moment(today).add(1, "day").startOf("day").format(),
+                },
+              }).session(session);
 
-            // 정말로 출석 기록이 없는 경우에만 결석 처리
-            if (!hasAttendance) {
-              const attendance = new Attendance({
-                studentId: student.studentId,
-                timestamp: now.format(),
-                status: "absent",
-                lateMinutes: 0,
-              });
-              await attendance.save({ session });
-              processedCount++;
-              logger.info(
-                `[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 결석 처리 완료`
-              );
+              // 정말로 출석 기록이 없는 경우에만 결석 처리
+              if (!hasAttendance) {
+                const attendance = new Attendance({
+                  studentId: student.studentId,
+                  timestamp: now.format(),
+                  status: "absent",
+                  lateMinutes: 0,
+                });
+                await attendance.save({ session });
+                processedCount++;
+                logger.info(
+                  `[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 결석 처리 완료`
+                );
+              } else {
+                logger.info(
+                  `[자동 결석 처리] 학생 ${student.studentId} (${student.name})은(는) 이미 출석 기록이 있어 결석 처리하지 않음`
+                );
+              }
+            } catch (error) {
+              logger.error(`[자동 결석 처리] 학생 ${student.studentId} (${student.name}) 처리 중 오류: ${error.message}`);
             }
           }
         });
