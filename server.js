@@ -1501,7 +1501,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
     ).length;
     const totalLate = attendances.filter((a) => a.status === "late").length;
     const totalAbsent = attendances.filter(
-      (a) => a.status === "absent" && !a.isExcused
+      (a) => a.status === "absent"
     ).length;
     const totalExcused = attendances.filter((a) => a.isExcused).length;
     const totalLateMinutes = attendances.reduce(
@@ -1538,7 +1538,7 @@ app.get("/api/attendance/stats", verifyToken, async (req, res) => {
           (a) => a.status === "late"
         ).length;
         const absentCount = studentAttendances.filter(
-          (a) => a.status === "absent" && !a.isExcused
+          (a) => a.status === "absent"
         ).length;
         const excusedCount = studentAttendances.filter(
           (a) => a.isExcused
@@ -1878,8 +1878,7 @@ async function calculateMonthStats(studentId, monthStart) {
     total: attendances.length,
     present: attendances.filter((a) => a.status === "present").length,
     late: attendances.filter((a) => a.status === "late").length,
-    absent: attendances.filter((a) => a.status === "absent" && !a.isExcused)
-      .length,
+    absent: attendances.filter((a) => a.status === "absent").length,
     excused: attendances.filter((a) => a.isExcused).length,
     lateMinutes: attendances.reduce((sum, a) => sum + (a.lateMinutes || 0), 0),
     attendanceRate:
@@ -1999,8 +1998,9 @@ app.get("/api/attendance/student/:studentId", verifyToken, async (req, res) => {
       total: attendances.length,
       present: attendances.filter((a) => a.status === "present").length,
       late: attendances.filter((a) => a.status === "late").length,
-      absent: attendances.filter((a) => a.status === "absent" && !a.isExcused)
-        .length,
+      absent: attendances.filter(
+        (a) => a.status === "absent"
+      ).length,
       excused: attendances.filter((a) => a.isExcused).length,
       totalLateMinutes: attendances.reduce(
         (sum, a) => sum + (a.lateMinutes || 0),
@@ -2893,7 +2893,7 @@ app.get("/api/attendance/export", verifyToken, isAdmin, async (req, res) => {
         ).length;
         const lateCount = attendances.filter((a) => a.status === "late").length;
         const absentCount = attendances.filter(
-          (a) => a.status === "absent" && !a.isExcused
+          (a) => a.status === "absent"
         ).length;
         const excusedCount = attendances.filter((a) => a.isExcused).length;
         const totalLateMinutes = attendances.reduce(
