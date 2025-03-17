@@ -57,17 +57,6 @@ app.use(
 );
 app.use(express.json());
 
-// rate limiter 설정
-const limiter = rateLimit({
-  windowMs: process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000,
-  max: process.env.RATE_LIMIT_MAX_REQUESTS || 1000,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// rate limiter 적용
-app.use(limiter);
-
 // MongoDB connection
 mongoose
   .connect(process.env.MONGODB_URI)
