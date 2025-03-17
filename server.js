@@ -1821,7 +1821,7 @@ app.post("/api/refresh-token", async (req, res) => {
     // 기존 리프레시 토큰 업데이트
     await RefreshToken.findByIdAndUpdate(refreshTokenDoc._id, {
       token: newRefreshToken,
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRES_IN),
+      expiresAt: new Date(Date.now() + getRefreshTokenExpiresIn(true)),
     });
 
     res.json({
