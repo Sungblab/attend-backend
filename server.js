@@ -1708,8 +1708,6 @@ const validatePassword = (password) => {
   };
 };
 
-app.use(limiter);
-
 // 3. 보안 헤더 추가
 app.use(helmet());
 // RefreshToken 모델 추가
