@@ -6,7 +6,6 @@ const cors = require("cors");
 const crypto = require("crypto");
 const moment = require("moment-timezone");
 require("dotenv").config();
-const rateLimit = require("express-rate-limit");
 const helmet = require("helmet");
 const winston = require("winston");
 const axios = require("axios");
