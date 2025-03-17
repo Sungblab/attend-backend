@@ -312,40 +312,7 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
-// 로그인 시도 횟수 관리를 위한 Map
-const loginAttempts = new Map();
-
-// 로그인 시도 횟수 체크 미들웨어
-const checkLoginAttempts = async (req, res, next) => {
-  const ip = req.ip;
-  const currentAttempts = loginAttempts.get(ip) || {
-    count: 0,
-    timestamp: Date.now(),
-  };
-
-  // 최대 시도 횟수를 10회로 늘리고, 잠금 시간을 5분으로 설정
-  const MAX_ATTEMPTS = process.env.MAX_LOGIN_ATTEMPTS || 50;
-  const LOCKOUT_TIME = process.env.LOGIN_LOCKOUT_TIME || 5 * 60 * 1000; // 기본값 5분
-
-  // 잠금 시간이 지났는지 확인
-  if (currentAttempts.count >= MAX_ATTEMPTS) {
-    const timeSinceLock = Date.now() - currentAttempts.timestamp;
-    if (timeSinceLock < LOCKOUT_TIME) {
-      return res.status(429).json({
-        success: false,
-        message: "너무 많은 로그인 시도. 잠시 후 다시 시도해주세요.",
-        remainingTime: Math.ceil((LOCKOUT_TIME - timeSinceLock) / 1000),
-      });
-    } else {
-      // 잠금 시간이 지났으면 초기화
-      loginAttempts.delete(ip);
-    }
-  }
-
-  next();
-};
-
-// 로그인 라우트에 미들웨어 적용
+// 로그인 라우트
 app.post("/api/login", async (req, res) => {
   try {
     const {
