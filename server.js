@@ -966,16 +966,52 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
         });
       }
 
+      // 트랜잭션 시작 전에 중복 출석 체크 (추가된 부분)
+      const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
+      const tomorrow = moment(today).add(1, "days");
+      
+      const existingAttendanceBeforeTransaction = await Attendance.findOne({
+        studentId,
+        timestamp: {
+          $gte: today.format(),
+          $lt: tomorrow.format(),
+        },
+      });
+      
+      if (existingAttendanceBeforeTransaction) {
+        let statusMessage = "";
+        switch (existingAttendanceBeforeTransaction.status) {
+          case "present":
+            statusMessage = "이미 오늘 출석 처리되었습니다. 하루에 한 번만 출석이 가능합니다.";
+            break;
+          case "late":
+            statusMessage = `이미 오늘 지각 처리되었습니다. (${existingAttendanceBeforeTransaction.lateMinutes}분 지각)`;
+            break;
+          case "absent":
+            statusMessage = existingAttendanceBeforeTransaction.isExcused 
+              ? "이미 오늘 인정결석 처리되었습니다."
+              : "이미 오늘 결석 처리되었습니다.";
+            break;
+        }
+
+        return res.status(200).json({
+          success: false,
+          message: statusMessage,
+          type: `ALREADY_${existingAttendanceBeforeTransaction.status.toUpperCase()}`,
+          attendance: {
+            ...existingAttendanceBeforeTransaction.toObject(),
+            name: student.name,
+          },
+        });
+      }
+
       // 트랜잭션 시작
       const session = await mongoose.startSession();
       let result;
 
       try {
         await session.withTransaction(async () => {
-          const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
-          const tomorrow = moment(today).add(1, "days");
-
-          // findOne을 트랜잭션 내에서 실행하고 lock 설정
+          // 트랜잭션 내에서 다시 한번 중복 체크 (race condition 방지)
           const existingAttendance = await Attendance.findOne({
             studentId,
             timestamp: {
@@ -1024,15 +1060,30 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
             return;
           }
 
-          // 새로운 출석 기록 생성
-          const attendance = new Attendance({
+          // 새로운 출석 기록 생성 - findOneAndUpdate로 변경하여 race condition 방지
+          const attendanceData = {
             studentId,
             timestamp,
             status: attendanceStatus.status,
             lateMinutes: attendanceStatus.lateMinutes,
-          });
-
-          await attendance.save({ session });
+          };
+          
+          // findOneAndUpdate를 사용하여 동시 요청 처리 개선
+          const attendance = await Attendance.findOneAndUpdate(
+            {
+              studentId,
+              timestamp: {
+                $gte: today.format(),
+                $lt: tomorrow.format(),
+              }
+            },
+            { $setOnInsert: attendanceData },
+            { 
+              upsert: true, 
+              new: true,
+              session 
+            }
+          );
 
           result = {
             success: true,
