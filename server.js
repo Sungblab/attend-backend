@@ -127,10 +127,17 @@ const generateRefreshToken = () => {
 
 // 리프레시 토큰 만료 시간을 로그인 유지 여부에 따라 설정
 const getRefreshTokenExpiresIn = (keepLoggedIn) => {
-  // 로그인 유지 여부와 관계없이 1년으로 설정
-  return (
-    parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN) || 365 * 24 * 60 * 60 * 1000
-  );
+  // 로그인 유지 여부에 따라 만료 시간 설정
+  if (keepLoggedIn) {
+    // 로그인 유지 선택 시 1년
+    return (
+      parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN) ||
+      365 * 24 * 60 * 60 * 1000
+    );
+  } else {
+    // 로그인 유지 미선택 시 30일
+    return 30 * 24 * 60 * 60 * 1000;
+  }
 };
 
 // 토큰 검증 미들웨어 수정
@@ -1730,7 +1737,7 @@ const RefreshToken = mongoose.model("RefreshToken", RefreshTokenSchema);
 // 리프레시 토큰 엔드 포인트 수정
 app.post("/api/refresh-token", async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    const { refreshToken, keepLoggedIn } = req.body;
 
     if (!refreshToken) {
       return res.status(400).json({
@@ -1773,7 +1780,7 @@ app.post("/api/refresh-token", async (req, res) => {
     // 기존 리프레시 토큰 업데이트
     await RefreshToken.findByIdAndUpdate(refreshTokenDoc._id, {
       token: newRefreshToken,
-      expiresAt: new Date(Date.now() + getRefreshTokenExpiresIn(true)),
+      expiresAt: new Date(Date.now() + getRefreshTokenExpiresIn(keepLoggedIn)),
     });
 
     res.json({
