@@ -7,34 +7,9 @@ const crypto = require("crypto");
 const moment = require("moment-timezone");
 require("dotenv").config();
 const helmet = require("helmet");
-const winston = require("winston");
 const axios = require("axios");
 const schedule = require("node-schedule");
 const XLSX = require("xlsx");
-
-// 로그 시스템 초기화를 가장 먼저 수행
-const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || "info",
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.printf(({ level, message, timestamp }) => {
-      return `${timestamp} ${level}: ${message}`;
-    })
-  ),
-  transports: [
-    new winston.transports.File({ filename: "error.log", level: "error" }),
-    new winston.transports.File({ filename: "combined.log" }),
-  ],
-});
-
-// 개발 환경에서는 콘솔에도 로그 출력
-if (process.env.NODE_ENV !== "production") {
-  logger.add(
-    new winston.transports.Console({
-      format: winston.format.simple(),
-    })
-  );
-}
 
 const app = express();
 
@@ -59,8 +34,8 @@ app.use(express.json());
 // MongoDB connection
 mongoose
   .connect(process.env.MONGODB_URI)
-  .then(() => logger.info("MongoDB connected"))
-  .catch((err) => logger.error("MongoDB connection error:", err));
+  .then(() => console.log("MongoDB connected"))
+  .catch((err) => console.error("MongoDB connection error:", err));
 
 // User model
 const UserSchema = new mongoose.Schema({
@@ -294,7 +269,6 @@ app.post("/api/login", async (req, res) => {
       keepLoggedIn = false,
       isWeb = false,
     } = req.body;
-    const ip = req.ip;
 
     // 입력값 검증
     if (!studentId || !password) {
@@ -1069,13 +1043,13 @@ async function processAutoAbsent() {
     const today = now.format("YYYY-MM-DD");
     const currentTime = now.format("HH:mm:ss");
 
-    logger.info(`[자동 결석 처리] 시작 - ${today} ${currentTime}`);
-    logger.info(`[자동 결석 처리] 자동 결석 처리 기능이 비활성화되었습니다.`);
-    logger.info(
+    console.log(`[자동 결석 처리] 시작 - ${today} ${currentTime}`);
+    console.log(`[자동 결석 처리] 자동 결석 처리 기능이 비활성화되었습니다.`);
+    console.log(
       `[자동 결석 처리] 완료 - 자동 결석 처리 기능이 비활성화되었습니다.`
     );
   } catch (error) {
-    logger.error("[자동 결석 처리] 오류 발생:", error);
+    console.error("[자동 결석 처리] 오류 발생:", error);
   }
 }
 
@@ -1190,7 +1164,7 @@ app.post(
         ...results,
       });
     } catch (error) {
-      logger.error("수동 지각 처리 중 오류:", error);
+      console.error("수동 지각 처리 중 오류:", error);
       res.status(500).json({
         success: false,
         message: "지각 처리 중 오류가 발생했습니다.",
@@ -1309,10 +1283,10 @@ async function setupAutoAbsentSchedule() {
     // 기존 스케줄이 있다면 취소
     if (autoAbsentJob) {
       autoAbsentJob.cancel();
-      logger.info("[스케줄러] 기존 자동 결석 처리 스케줄이 취소되었습니다.");
+      console.log("[스케줄러] 기존 자동 결석 처리 스케줄이 취소되었습니다.");
     }
 
-    logger.info("[스케줄러] 자동 결석 처리 기능이 비활성화되었습니다.");
+    console.log("[스케줄러] 자동 결석 처리 기능이 비활성화되었습니다.");
 
     return {
       success: true,
@@ -1320,7 +1294,7 @@ async function setupAutoAbsentSchedule() {
       nextInvocation: null,
     };
   } catch (error) {
-    logger.error(
+    console.error(
       "[스케줄러] 자동 결석 처리 스케줄 설정 중 오류: " + error.message
     );
     throw error;
@@ -1369,12 +1343,12 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
     // 자동 결석 처리 스케줄 재설정
     try {
       const scheduleResult = await setupAutoAbsentSchedule();
-      logger.info(
+      console.log(
         "[설정] 자동 결석 처리 스케줄이 업데이트되었습니다:",
         scheduleResult
       );
     } catch (scheduleError) {
-      logger.error("[설정] 스케줄 업데이트 중 오류:", scheduleError);
+      console.error("[설정] 스케줄 업데이트 중 오류:", scheduleError);
       return res.status(500).json({
         success: false,
         message:
@@ -1406,7 +1380,7 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
 
 // 서버 시작 시 자동 결석 처리 스케줄 설정
 setupAutoAbsentSchedule().catch((error) => {
-  logger.error("초기 자동 결석 처리 스케줄 설정 중 오류: " + error.message);
+  console.error("초기 자동 결석 처리 스케줄 설정 중 오류: " + error.message);
 });
 
 // 출석 통계 API 개선
@@ -2714,10 +2688,10 @@ async function initializeAttendanceSettings() {
         lateTime: "09:00",
       });
       await defaultSettings.save();
-      logger.info("기본 출결 설정이 생성되었습니다.");
+      console.log("기본 출결 설정이 생성되었습니다.");
     }
   } catch (error) {
-    logger.error("기본 출결 설정 초기화 중 오류: " + error.message);
+    console.error("기본 출결 설정 초기화 중 오류: " + error.message);
   }
 }
 
@@ -2726,9 +2700,9 @@ async function initializeServer() {
   try {
     await initializeAttendanceSettings();
     await setupAutoAbsentSchedule();
-    logger.info("서버 초기화가 완료되었습니다.");
+    console.log("서버 초기화가 완료되었습니다.");
   } catch (error) {
-    logger.error("서버 초기화 중 오류: " + error.message);
+    console.error("서버 초기화 중 오류: " + error.message);
   }
 }
 
@@ -3311,12 +3285,12 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
     // 자동 결석 처리 스케줄 재설정
     try {
       const scheduleResult = await setupAutoAbsentSchedule();
-      logger.info(
+      console.log(
         "[설정] 자동 결석 처리 스케줄이 업데이트되었습니다:",
         scheduleResult
       );
     } catch (scheduleError) {
-      logger.error("[설정] 스케줄 업데이트 중 오류:", scheduleError);
+      console.error("[설정] 스케줄 업데이트 중 오류:", scheduleError);
       return res.status(500).json({
         success: false,
         message:
