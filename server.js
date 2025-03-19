@@ -116,7 +116,7 @@ const generateAccessToken = (user) => {
       isReader: user.isReader,
     },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "30d" }
+    { expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "90d" } // 30d에서 90d로 수정
   );
 };
 
@@ -127,11 +127,10 @@ const generateRefreshToken = () => {
 
 // 리프레시 토큰 만료 시간을 로그인 유지 여부에 따라 설정
 const getRefreshTokenExpiresIn = (keepLoggedIn) => {
-  return keepLoggedIn
-    ? parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN) ||
-        365 * 24 * 60 * 60 * 1000
-    : parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN) ||
-        30 * 24 * 60 * 60 * 1000;
+  // 로그인 유지 여부와 관계없이 1년으로 설정
+  return (
+    parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN) || 365 * 24 * 60 * 60 * 1000
+  );
 };
 
 // 토큰 검증 미들웨어 수정
