@@ -6,7 +6,6 @@ const cors = require("cors");
 const crypto = require("crypto");
 const moment = require("moment-timezone");
 require("dotenv").config();
-const rateLimit = require("express-rate-limit");
 const helmet = require("helmet");
 const winston = require("winston");
 const axios = require("axios");
@@ -57,17 +56,6 @@ app.use(
 );
 app.use(express.json());
 
-// rate limiter 설정
-const limiter = rateLimit({
-  windowMs: process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000,
-  max: process.env.RATE_LIMIT_MAX_REQUESTS || 1000,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// rate limiter 적용
-app.use(limiter);
-
 // MongoDB connection
 mongoose
   .connect(process.env.MONGODB_URI)
@@ -111,10 +99,8 @@ const AttendanceSettings = mongoose.model(
 );
 
 // JWT Secret 키 확인
-if (!process.env.JWT_SECRET || !process.env.REFRESH_TOKEN_SECRET) {
-  console.error(
-    "JWT_SECRET or REFRESH_TOKEN_SECRET is not defined in environment variables"
-  );
+if (!process.env.JWT_SECRET) {
+  console.error("JWT_SECRET is not defined in environment variables");
   process.exit(1);
 }
 
@@ -128,22 +114,8 @@ const generateAccessToken = (user) => {
       isReader: user.isReader,
     },
     process.env.JWT_SECRET,
-    { expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "7d" }
+    { expiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "90d" } // 30d에서 90d로 수정
   );
-};
-
-// 리프레시 토큰 생성 함수
-const generateRefreshToken = () => {
-  return crypto.randomBytes(40).toString("hex");
-};
-
-// 리프레시 토큰 만료 시간을 로그인 유지 여부에 따라 설정
-const getRefreshTokenExpiresIn = (keepLoggedIn) => {
-  return keepLoggedIn
-    ? parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN) ||
-        365 * 24 * 60 * 60 * 1000
-    : parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN) ||
-        30 * 24 * 60 * 60 * 1000;
 };
 
 // 토큰 검증 미들웨어 수정
@@ -312,41 +284,8 @@ app.post("/api/signup", async (req, res) => {
   }
 });
 
-// 로그인 시도 횟수 관리를 위한 Map
-const loginAttempts = new Map();
-
-// 로그인 시도 횟수 체크 미들웨어
-const checkLoginAttempts = async (req, res, next) => {
-  const ip = req.ip;
-  const currentAttempts = loginAttempts.get(ip) || {
-    count: 0,
-    timestamp: Date.now(),
-  };
-
-  // 최대 시도 횟수를 10회로 늘리고, 잠금 시간을 5분으로 설정
-  const MAX_ATTEMPTS = process.env.MAX_LOGIN_ATTEMPTS || 50;
-  const LOCKOUT_TIME = process.env.LOGIN_LOCKOUT_TIME || 5 * 60 * 1000; // 기본값 5분
-
-  // 잠금 시간이 지났는지 확인
-  if (currentAttempts.count >= MAX_ATTEMPTS) {
-    const timeSinceLock = Date.now() - currentAttempts.timestamp;
-    if (timeSinceLock < LOCKOUT_TIME) {
-      return res.status(429).json({
-        success: false,
-        message: "너무 많은 로그인 시도. 잠시 후 다시 시도해주세요.",
-        remainingTime: Math.ceil((LOCKOUT_TIME - timeSinceLock) / 1000),
-      });
-    } else {
-      // 잠금 시간이 지났으면 초기화
-      loginAttempts.delete(ip);
-    }
-  }
-
-  next();
-};
-
-// 로그인 라우트에 미들웨어 적용
-app.post("/api/login", checkLoginAttempts, async (req, res) => {
+// 로그인 라우트
+app.post("/api/login", async (req, res) => {
   try {
     const {
       studentId,
@@ -368,7 +307,6 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     // 사용자 찾기
     const user = await User.findOne({ studentId });
     if (!user) {
-      incrementLoginAttempts(ip);
       return res.status(401).json({
         success: false,
         message: "학번 또는 비밀번호가 일치하지 않습니다.",
@@ -386,7 +324,6 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     // 비밀번호 확인
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      incrementLoginAttempts(ip);
       return res.status(401).json({
         success: false,
         message: "학번 또는 비밀번호가 일치하지 않습니다.",
@@ -438,22 +375,8 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
       }
     }
 
-    // 로그인 성공 시 시도 횟수 초기화
-    loginAttempts.delete(ip);
-
     // 토큰 생성
     const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken();
-
-    // 리프레시 토큰 저장
-    const refreshTokenDoc = new RefreshToken({
-      userId: user._id,
-      token: refreshToken,
-      expiresAt: new Date(Date.now() + getRefreshTokenExpiresIn(keepLoggedIn)),
-    });
-
-    await RefreshToken.deleteMany({ userId: user._id });
-    await refreshTokenDoc.save();
 
     // 리다이렉트 URL 설정
     const redirectUrl =
@@ -462,7 +385,6 @@ app.post("/api/login", checkLoginAttempts, async (req, res) => {
     res.json({
       success: true,
       accessToken,
-      refreshToken,
       redirectUrl,
       user: {
         id: user._id,
@@ -615,8 +537,6 @@ app.post("/api/admin/set-teacher", verifyToken, isAdmin, async (req, res) => {
 // Logout route
 app.post("/api/logout", verifyToken, async (req, res) => {
   try {
-    const { refreshToken } = req.body;
-    await RefreshToken.deleteOne({ token: refreshToken });
     res.json({ success: true, message: "로그아웃되었습니다." });
   } catch (error) {
     res.status(500).json({ message: "서버 오류가 발생했습니다." });
@@ -967,16 +887,53 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
         });
       }
 
+      // 트랜잭션 시작 전에 중복 출석 체크 (추가된 부분)
+      const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
+      const tomorrow = moment(today).add(1, "days");
+
+      const existingAttendanceBeforeTransaction = await Attendance.findOne({
+        studentId,
+        timestamp: {
+          $gte: today.format(),
+          $lt: tomorrow.format(),
+        },
+      });
+
+      if (existingAttendanceBeforeTransaction) {
+        let statusMessage = "";
+        switch (existingAttendanceBeforeTransaction.status) {
+          case "present":
+            statusMessage =
+              "이미 오늘 출석 처리되었습니다. 하루에 한 번만 출석이 가능합니다.";
+            break;
+          case "late":
+            statusMessage = `이미 오늘 지각 처리되었습니다. (${existingAttendanceBeforeTransaction.lateMinutes}분 지각)`;
+            break;
+          case "absent":
+            statusMessage = existingAttendanceBeforeTransaction.isExcused
+              ? "이미 오늘 인정결석 처리되었습니다."
+              : "이미 오늘 결석 처리되었습니다.";
+            break;
+        }
+
+        return res.status(200).json({
+          success: false,
+          message: statusMessage,
+          type: `ALREADY_${existingAttendanceBeforeTransaction.status.toUpperCase()}`,
+          attendance: {
+            ...existingAttendanceBeforeTransaction.toObject(),
+            name: student.name,
+          },
+        });
+      }
+
       // 트랜잭션 시작
       const session = await mongoose.startSession();
       let result;
 
       try {
         await session.withTransaction(async () => {
-          const today = moment.tz(timestamp, "Asia/Seoul").startOf("day");
-          const tomorrow = moment(today).add(1, "days");
-
-          // findOne을 트랜잭션 내에서 실행하고 lock 설정
+          // 트랜잭션 내에서 다시 한번 중복 체크 (race condition 방지)
           const existingAttendance = await Attendance.findOne({
             studentId,
             timestamp: {
@@ -1029,15 +986,30 @@ app.post("/api/attendance", verifyToken, isReader, async (req, res) => {
             return;
           }
 
-          // 새로운 출석 기록 생성
-          const attendance = new Attendance({
+          // 새로운 출석 기록 생성 - findOneAndUpdate로 변경하여 race condition 방지
+          const attendanceData = {
             studentId,
             timestamp,
             status: attendanceStatus.status,
             lateMinutes: attendanceStatus.lateMinutes,
-          });
+          };
 
-          await attendance.save({ session });
+          // findOneAndUpdate를 사용하여 동시 요청 처리 개선
+          const attendance = await Attendance.findOneAndUpdate(
+            {
+              studentId,
+              timestamp: {
+                $gte: today.format(),
+                $lt: tomorrow.format(),
+              },
+            },
+            { $setOnInsert: attendanceData },
+            {
+              upsert: true,
+              new: true,
+              session,
+            }
+          );
 
           result = {
             success: true,
@@ -1706,97 +1678,8 @@ const validatePassword = (password) => {
   };
 };
 
-app.use(limiter);
-
 // 3. 보안 헤더 추가
 app.use(helmet());
-// RefreshToken 모델 추가
-const RefreshTokenSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  token: { type: String, required: true },
-  expiresAt: {
-    type: Date,
-    required: true,
-    validate: {
-      validator: function (v) {
-        return v instanceof Date && !isNaN(v);
-      },
-      message: "유효한 날짜가 아닙니다.",
-    },
-  },
-});
-
-const RefreshToken = mongoose.model("RefreshToken", RefreshTokenSchema);
-
-// 리프레시 토큰 엔드 포인트 수정
-app.post("/api/refresh-token", async (req, res) => {
-  try {
-    const { refreshToken } = req.body;
-
-    if (!refreshToken) {
-      return res.status(400).json({
-        success: false,
-        message: "리프레시 토큰이 필요합니다.",
-      });
-    }
-
-    // 리프레시 토큰 검증
-    const refreshTokenDoc = await RefreshToken.findOne({
-      token: refreshToken,
-      expiresAt: { $gt: new Date() },
-    });
-
-    if (!refreshTokenDoc) {
-      return res.status(401).json({
-        success: false,
-        message: "유효하지 않거나 만료된 리프레시 토큰입니다.",
-        needRelogin: true,
-      });
-    }
-
-    // 사용자 정보 조회
-    const user = await User.findById(refreshTokenDoc.userId);
-    if (!user) {
-      await RefreshToken.deleteOne({ _id: refreshTokenDoc._id });
-      return res.status(401).json({
-        success: false,
-        message: "사용자를 찾을 수 없습니다.",
-        needRelogin: true,
-      });
-    }
-
-    // 새운 액세스 토큰 생성
-    const accessToken = generateAccessToken(user);
-
-    // 새로운 리프레시 토큰 생성
-    const newRefreshToken = generateRefreshToken();
-
-    // 기존 리프레시 토큰 업데이트
-    await RefreshToken.findByIdAndUpdate(refreshTokenDoc._id, {
-      token: newRefreshToken,
-      expiresAt: new Date(Date.now() + REFRESH_TOKEN_EXPIRES_IN),
-    });
-
-    res.json({
-      success: true,
-      accessToken,
-      refreshToken: newRefreshToken,
-      user: {
-        id: user._id,
-        studentId: user.studentId,
-        name: user.name,
-        isAdmin: user.isAdmin,
-        isReader: user.isReader,
-      },
-    });
-  } catch (error) {
-    console.error("Refresh token error:", error);
-    res.status(500).json({
-      success: false,
-      message: "토큰 갱신 중 오류가 발생했습니다.",
-    });
-  }
-});
 
 // 인정결석 처리 API
 app.post("/api/attendance/excuse", verifyToken, isAdmin, async (req, res) => {
@@ -2479,7 +2362,6 @@ function validateEnvVariables() {
   const requiredEnvVars = [
     "MONGODB_URI",
     "JWT_SECRET",
-    "REFRESH_TOKEN_SECRET",
     "ENCRYPTION_KEY",
     "NEIS_API_KEY",
   ];
