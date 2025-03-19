@@ -81,6 +81,7 @@ if (!process.env.JWT_SECRET) {
 
 // JWT 토큰 생성 함수
 const generateAccessToken = (user) => {
+  console.log(`[토큰 생성] 사용자: ${user.studentId}, 시간: ${new Date().toISOString()}`);
   return jwt.sign(
     {
       id: user._id,
@@ -95,9 +96,11 @@ const generateAccessToken = (user) => {
 
 // 토큰 검증 미들웨어 수정
 const verifyToken = (req, res, next) => {
+  console.log(`[토큰 검증] 요청 경로: ${req.path}, 시간: ${new Date().toISOString()}`);
   try {
     const authHeader = req.header("Authorization");
     if (!authHeader) {
+      console.log('[토큰 검증 실패] Authorization 헤더 없음');
       return res.status(401).json({
         success: false,
         message: "Authorization 헤더가 없습니다.",
@@ -106,6 +109,7 @@ const verifyToken = (req, res, next) => {
 
     const [bearer, token] = authHeader.split(" ");
     if (bearer !== "Bearer" || !token || token.trim() === "") {
+      console.log('[토큰 검증 실패] 잘못된 토큰 형식');
       return res.status(401).json({
         success: false,
         message: "잘못된 토큰 형식입니다.",
@@ -118,13 +122,14 @@ const verifyToken = (req, res, next) => {
         console.error("Token verification error:", err);
 
         if (err.name === "TokenExpiredError") {
+          console.log(`[토큰 만료] 토큰: ${cleanToken.substring(0, 10)}...`);
           return res.status(401).json({
             success: false,
             message: "토큰이 만료되었습니다.",
-            needRefresh: true,
           });
         }
 
+        console.log(`[토큰 검증 실패] 에러 유형: ${err.name}`);
         return res.status(401).json({
           success: false,
           message: "유효하지 않은 토큰입니다.",
@@ -132,6 +137,7 @@ const verifyToken = (req, res, next) => {
         });
       }
 
+      console.log(`[토큰 검증 성공] 사용자: ${decoded.studentId}`);
       req.user = decoded;
       next();
     });
@@ -261,16 +267,15 @@ app.post("/api/signup", async (req, res) => {
 
 // 로그인 라우트
 app.post("/api/login", async (req, res) => {
+  console.log(`[로그인 시도] 학번: ${req.body.studentId}, 시간: ${new Date().toISOString()}`);
   try {
     const {
       studentId,
       password,
       deviceInfo = null,
-      keepLoggedIn = false,
       isWeb = false,
     } = req.body;
-    const ip = req.ip;
-
+    
     // 입력값 검증
     if (!studentId || !password) {
       return res.status(400).json({
@@ -352,6 +357,7 @@ app.post("/api/login", async (req, res) => {
 
     // 토큰 생성
     const accessToken = generateAccessToken(user);
+    console.log(`[로그인 성공] 학번: ${user.studentId}, 권한: ${user.isAdmin ? '관리자' : (user.isReader ? '리더기' : '일반')}`);
 
     // 리다이렉트 URL 설정
     const redirectUrl =
@@ -1037,23 +1043,6 @@ function getStatusMessage(attendance) {
   }
 }
 
-// 자동 결석 처리 함수 수정
-async function processAutoAbsent() {
-  try {
-    const now = moment().tz("Asia/Seoul");
-    const today = now.format("YYYY-MM-DD");
-    const currentTime = now.format("HH:mm:ss");
-
-    console.log(`[자동 결석 처리] 시작 - ${today} ${currentTime}`);
-    console.log(`[자동 결석 처리] 자동 결석 처리 기능이 비활성화되었습니다.`);
-    console.log(
-      `[자동 결석 처리] 완료 - 자동 결석 처리 기능이 비활성화되었습니다.`
-    );
-  } catch (error) {
-    console.error("[자동 결석 처리] 오류 발생:", error);
-  }
-}
-
 // 수동 지각 처리 API
 app.post(
   "/api/attendance/process-late",
@@ -1275,32 +1264,7 @@ app.post(
   }
 );
 
-// 전역 스케줄러 객체 저장
-let autoAbsentJob = null;
-
-// 매일 자동 결석 처리 실행 스케줄 설정
-async function setupAutoAbsentSchedule() {
-  try {
-    // 기존 스케줄이 있다면 취소
-    if (autoAbsentJob) {
-      autoAbsentJob.cancel();
-      console.log("[스케줄러] 기존 자동 결석 처리 스케줄이 취소되었습니다.");
-    }
-
-    console.log("[스케줄러] 자동 결석 처리 기능이 비활성화되었습니다.");
-
-    return {
-      success: true,
-      message: "자동 결석 처리 기능이 비활성화되었습니다.",
-      nextInvocation: null,
-    };
-  } catch (error) {
-    console.error(
-      "[스케줄러] 자동 결석 처리 스케줄 설정 중 오류: " + error.message
-    );
-    throw error;
-  }
-}
+// 전역 스케줄러 객체 변수 삭제됨
 
 // 출석 설정이 변경될 때마다 스케줄 재설정
 app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
@@ -1341,23 +1305,6 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
 
     await settings.save();
 
-    // 자동 결석 처리 스케줄 재설정
-    try {
-      const scheduleResult = await setupAutoAbsentSchedule();
-      console.log(
-        "[설정] 자동 결석 처리 스케줄이 업데이트되었습니다:",
-        scheduleResult
-      );
-    } catch (scheduleError) {
-      console.error("[설정] 스케줄 업데이트 중 오류:", scheduleError);
-      return res.status(500).json({
-        success: false,
-        message:
-          "출결 설정은 저장되었으나, 자동 결석 처리 스케줄 업데이트에 실패했습니다.",
-        error: scheduleError.message,
-      });
-    }
-
     res.json({
       success: true,
       message: "출결 설정이 업데이트되었습니다.",
@@ -1379,10 +1326,7 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// 서버 시작 시 자동 결석 처리 스케줄 설정
-setupAutoAbsentSchedule().catch((error) => {
-  console.error("초기 자동 결석 처리 스케줄 설정 중 오류: " + error.message);
-});
+// 서버 시작 시 자동 결석 처리 스케줄 설정 코드 삭제됨
 
 // 출석 통계 API 개선
 app.get("/api/attendance/stats", verifyToken, async (req, res) => {
@@ -2700,7 +2644,6 @@ async function initializeAttendanceSettings() {
 async function initializeServer() {
   try {
     await initializeAttendanceSettings();
-    await setupAutoAbsentSchedule();
     console.log("서버 초기화가 완료되었습니다.");
   } catch (error) {
     console.error("서버 초기화 중 오류: " + error.message);
@@ -3282,23 +3225,6 @@ app.put("/api/settings/attendance", verifyToken, isAdmin, async (req, res) => {
     });
 
     await settings.save();
-
-    // 자동 결석 처리 스케줄 재설정
-    try {
-      const scheduleResult = await setupAutoAbsentSchedule();
-      console.log(
-        "[설정] 자동 결석 처리 스케줄이 업데이트되었습니다:",
-        scheduleResult
-      );
-    } catch (scheduleError) {
-      console.error("[설정] 스케줄 업데이트 중 오류:", scheduleError);
-      return res.status(500).json({
-        success: false,
-        message:
-          "출결 설정은 저장되었으나, 자동 결석 처리 스케줄 업데이트에 실패했습니다.",
-        error: scheduleError.message,
-      });
-    }
 
     res.json({
       success: true,
