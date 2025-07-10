@@ -653,13 +653,13 @@ function toKoreanTimeString(date) {
   return moment(date).tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss");
 }
 
-// 기존 AttendanceSchema 제거하고 새로운 스키마로 통합
+// 기존 AttendanceSchema 수정 (selfReported 필드 추가)
 const AttendanceSchema = new mongoose.Schema({
   studentId: { type: String, required: true },
   timestamp: { type: String, required: true },
   status: {
     type: String,
-    enum: ["present", "late", "absent"],
+    enum: ["present", "late", "absent", "pending"], // pending 상태 추가
     required: true,
   },
   lateMinutes: { type: Number, default: 0 },
@@ -667,6 +667,15 @@ const AttendanceSchema = new mongoose.Schema({
   reason: { type: String },
   excusedAt: { type: Date },
   excusedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  selfReported: { type: Boolean, default: false }, // 자진 결석 여부
+  selfReportedAt: { type: Date }, // 자진 결석 신고 시간
+  approvalStatus: { 
+    type: String, 
+    enum: ["pending", "approved", "rejected"], 
+    default: null 
+  }, // 승인 상태
+  approvedAt: { type: Date }, // 승인/반려 시간
+  approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // 승인/반려한 관리자
 });
 
 const Attendance = mongoose.model("Attendance", AttendanceSchema);
@@ -3551,3 +3560,240 @@ app.post(
     }
   }
 );
+
+// 학생 자진 결석 처리 API 추가
+app.post("/api/attendance/self-absent", verifyToken, async (req, res) => {
+  try {
+    const { reason } = req.body;
+
+    if (!reason || reason.trim() === "") {
+      return res.status(400).json({
+        success: false,
+        message: "결석 사유를 입력해주세요.",
+      });
+    }
+
+    const today = moment().tz("Asia/Seoul").startOf("day");
+    const tomorrow = moment(today).add(1, "days");
+
+    // 오늘 이미 출석 기록이 있는지 확인
+    const existingAttendance = await Attendance.findOne({
+      studentId: req.user.studentId,
+      timestamp: {
+        $gte: today.format("YYYY-MM-DD 00:00:00"),
+        $lt: tomorrow.format("YYYY-MM-DD 00:00:00"),
+      },
+    });
+
+    if (existingAttendance) {
+      let message = "";
+      switch (existingAttendance.status) {
+        case "present":
+          message = "이미 출석 처리되었습니다.";
+          break;
+        case "late":
+          message = "이미 지각 처리되었습니다.";
+          break;
+        case "absent":
+          if (existingAttendance.selfReported) {
+            message = "이미 자진 결석 처리되었습니다.";
+          } else {
+            message = "이미 결석 처리되었습니다.";
+          }
+          break;
+        case "pending":
+          if (existingAttendance.selfReported) {
+            if (existingAttendance.approvalStatus === "pending") {
+              message = "이미 자진 결석 신고가 대기 중입니다.";
+            } else if (existingAttendance.approvalStatus === "rejected") {
+              message = "자진 결석 신고가 반려되었습니다.";
+            }
+          }
+          break;
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: message,
+      });
+    }
+
+    // 자진 결석 신고 생성 (대기 상태)
+    const attendance = new Attendance({
+      studentId: req.user.studentId,
+      timestamp: moment().tz("Asia/Seoul").format("YYYY-MM-DD HH:mm:ss"),
+      status: "pending", // 대기 상태로 설정
+      reason: reason.trim(),
+      selfReported: true,
+      selfReportedAt: new Date(),
+      approvalStatus: "pending",
+    });
+
+    await attendance.save();
+
+    // 학생 정보 조회
+    const student = await User.findById(req.user.id);
+
+    res.json({
+      success: true,
+      message: "자진 결석 신고가 완료되었습니다. 관리자 승인을 기다려주세요.",
+      attendance: {
+        ...attendance.toObject(),
+        name: student.name,
+      },
+    });
+  } catch (error) {
+    console.error("자진 결석 처리 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "자진 결석 처리 중 오류가 발생했습니다.",
+      error: error.message,
+    });
+  }
+});
+
+// 자진 결석 목록 조회 API 추가
+app.get("/api/attendance/self-absent", verifyToken, async (req, res) => {
+  try {
+    const { startDate, endDate, grade, classNum, limit = 20 } = req.query;
+
+    // 권한 확인 (관리자만 조회 가능)
+    const user = await User.findById(req.user.id);
+    if (!user.isAdmin && !user.isReader) {
+      return res.status(403).json({
+        success: false,
+        message: "권한이 없습니다.",
+      });
+    }
+
+    // 기본 쿼리 조건 (대기 중인 자진 결석 신고만)
+    let query = { 
+      selfReported: true,
+      approvalStatus: "pending"
+    };
+
+    // 날짜 범위 필터
+    if (startDate || endDate) {
+      query.timestamp = {};
+      if (startDate) {
+        query.timestamp.$gte = moment
+          .tz(startDate, "Asia/Seoul")
+          .startOf("day")
+          .format("YYYY-MM-DD 00:00:00");
+      }
+      if (endDate) {
+        query.timestamp.$lte = moment
+          .tz(endDate, "Asia/Seoul")
+          .endOf("day")
+          .format("YYYY-MM-DD 23:59:59");
+      }
+    }
+
+    // 학생 정보로 필터링하기 위한 학생 목록 조회
+    let studentQuery = { isApproved: true };
+    if (grade) studentQuery.grade = parseInt(grade);
+    if (classNum) studentQuery.class = parseInt(classNum);
+
+    if (grade || classNum) {
+      const students = await User.find(studentQuery);
+      const studentIds = students.map((student) => student.studentId);
+      query.studentId = { $in: studentIds };
+    }
+
+    const selfAbsentAttendances = await Attendance.find(query)
+      .sort({ timestamp: -1 })
+      .limit(parseInt(limit));
+
+    // 학생 정보 조회를 위한 Promise.all 사용
+    const selfAbsentWithStudentInfo = await Promise.all(
+      selfAbsentAttendances.map(async (attendance) => {
+        const student = await User.findOne({ studentId: attendance.studentId });
+        return {
+          _id: attendance._id,
+          studentId: attendance.studentId,
+          studentName: student ? student.name : "알 수 없음",
+          grade: student ? student.grade : null,
+          class: student ? student.class : null,
+          number: student ? student.number : null,
+          date: attendance.timestamp,
+          reason: attendance.reason,
+          selfReportedAt: attendance.selfReportedAt,
+        };
+      })
+    );
+
+    // 학년, 반, 번호 순으로 정렬
+    const sortedSelfAbsent = selfAbsentWithStudentInfo.sort((a, b) => {
+      if (a.grade !== b.grade) return a.grade - b.grade;
+      if (a.class !== b.class) return a.class - b.class;
+      return a.number - b.number;
+    });
+
+    res.json({
+      success: true,
+      selfAbsent: sortedSelfAbsent,
+      total: await Attendance.countDocuments(query),
+    });
+  } catch (error) {
+    console.error("자진 결석 목록 조회 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "자진 결석 목록 조회 중 오류가 발생했습니다.",
+    });
+  }
+});
+
+// 자진 결석 승인/거부 API 추가
+app.post("/api/attendance/self-absent/approve", verifyToken, isAdmin, async (req, res) => {
+  try {
+    const { attendanceId, approved, adminReason } = req.body;
+
+    const attendance = await Attendance.findById(attendanceId);
+    if (!attendance) {
+      return res.status(404).json({
+        success: false,
+        message: "해당 출석 기록을 찾을 수 없습니다.",
+      });
+    }
+
+    if (!attendance.selfReported || attendance.approvalStatus !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: "처리할 수 있는 자진 결석 신고가 아닙니다.",
+      });
+    }
+
+    if (approved) {
+      // 승인 시 결석으로 처리
+      attendance.status = "absent";
+      attendance.approvalStatus = "approved";
+      attendance.approvedAt = new Date();
+      attendance.approvedBy = req.user.id;
+      if (adminReason) {
+        attendance.reason = `${attendance.reason} (관리자 승인: ${adminReason})`;
+      }
+    } else {
+      // 거부 시 신고를 반려 상태로 변경
+      attendance.approvalStatus = "rejected";
+      attendance.approvedAt = new Date();
+      attendance.approvedBy = req.user.id;
+      if (adminReason) {
+        attendance.reason = `${attendance.reason} (관리자 반려: ${adminReason})`;
+      }
+    }
+
+    await attendance.save();
+
+    res.json({
+      success: true,
+      message: approved ? "자진 결석이 승인되어 결석 처리되었습니다." : "자진 결석 신고가 반려되었습니다.",
+      attendance,
+    });
+  } catch (error) {
+    console.error("자진 결석 승인/거부 중 오류:", error);
+    res.status(500).json({
+      success: false,
+      message: "자진 결석 승인/거부 중 오류가 발생했습니다.",
+    });
+  }
+});
