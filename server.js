@@ -81,7 +81,6 @@ if (!process.env.JWT_SECRET) {
 
 // JWT 토큰 생성 함수
 const generateAccessToken = (user) => {
-  console.log(`[토큰 생성] 사용자: ${user.studentId}, 시간: ${new Date().toISOString()}`);
   return jwt.sign(
     {
       id: user._id,
@@ -96,11 +95,9 @@ const generateAccessToken = (user) => {
 
 // 토큰 검증 미들웨어 수정
 const verifyToken = (req, res, next) => {
-  console.log(`[토큰 검증] 요청 경로: ${req.path}, 시간: ${new Date().toISOString()}`);
   try {
     const authHeader = req.header("Authorization");
     if (!authHeader) {
-      console.log('[토큰 검증 실패] Authorization 헤더 없음');
       return res.status(401).json({
         success: false,
         message: "Authorization 헤더가 없습니다.",
@@ -109,7 +106,6 @@ const verifyToken = (req, res, next) => {
 
     const [bearer, token] = authHeader.split(" ");
     if (bearer !== "Bearer" || !token || token.trim() === "") {
-      console.log('[토큰 검증 실패] 잘못된 토큰 형식');
       return res.status(401).json({
         success: false,
         message: "잘못된 토큰 형식입니다.",
@@ -119,7 +115,6 @@ const verifyToken = (req, res, next) => {
     const cleanToken = token.trim();
     jwt.verify(cleanToken, process.env.JWT_SECRET, (err, decoded) => {
       if (err) {
-        console.error("Token verification error:", err);
 
         if (err.name === "TokenExpiredError") {
           console.log(`[토큰 만료] 토큰: ${cleanToken.substring(0, 10)}...`);
@@ -129,7 +124,6 @@ const verifyToken = (req, res, next) => {
           });
         }
 
-        console.log(`[토큰 검증 실패] 에러 유형: ${err.name}`);
         return res.status(401).json({
           success: false,
           message: "유효하지 않은 토큰입니다.",
@@ -137,12 +131,10 @@ const verifyToken = (req, res, next) => {
         });
       }
 
-      console.log(`[토큰 검증 성공] 사용자: ${decoded.studentId}`);
       req.user = decoded;
       next();
     });
   } catch (error) {
-    console.error("Token verification error:", error);
     return res.status(500).json({
       success: false,
       message: "서버 오류가 발생했습니다.",
@@ -267,7 +259,6 @@ app.post("/api/signup", async (req, res) => {
 
 // 로그인 라우트
 app.post("/api/login", async (req, res) => {
-  console.log(`[로그인 시도] 학번: ${req.body.studentId}, 시간: ${new Date().toISOString()}`);
   try {
     const {
       studentId,
@@ -357,7 +348,6 @@ app.post("/api/login", async (req, res) => {
 
     // 토큰 생성
     const accessToken = generateAccessToken(user);
-    console.log(`[로그인 성공] 학번: ${user.studentId}, 권한: ${user.isAdmin ? '관리자' : (user.isReader ? '리더기' : '일반')}`);
 
     // 리다이렉트 URL 설정
     const redirectUrl =
